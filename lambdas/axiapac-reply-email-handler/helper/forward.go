@@ -42,7 +42,7 @@ func ForwardTo(email *EmailInfo, address string, messageID *string) error {
 	email.From = NO_REPLY_EMAIL
 	email.To = []string{address}
 	email.Cc = []string{}
-	email.Bcc = []string{}
+	email.Bcc = []string{DEVOPS_TEAM_EMAIL}
 
 	return SendEmail(context.Background(), email)
 }

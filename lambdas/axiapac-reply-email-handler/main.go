@@ -33,9 +33,11 @@ func ForwardToCustomer(email *helper.EmailInfo, messageID *string) error {
 			return fmt.Errorf("unable to find email email address for customer %s: %w", customer, err)
 		}
 
+		to := strings.Join(email.To, ", ")
 		if err := helper.ForwardTo(email, customerEmail, messageID); err != nil {
 			return fmt.Errorf("unable to forward email to %s: %w", customerEmail, err)
 		}
+		fmt.Printf("[INFO] email sent to %s forward to %s\n", to, customerEmail)
 
 		return nil
 	}

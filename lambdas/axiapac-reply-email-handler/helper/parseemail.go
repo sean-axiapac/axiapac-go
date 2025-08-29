@@ -1,10 +1,12 @@
 package helper
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
 	"strings"
 )
@@ -45,11 +47,22 @@ func ParseEmail(raw string) (*EmailInfo, error) {
 		Subject: subject,
 	}
 
+	decodeBody := func(r io.Reader, encoding string) ([]byte, error) {
+		var reader io.Reader = r
+		switch strings.ToLower(encoding) {
+		case "base64":
+			reader = base64.NewDecoder(base64.StdEncoding, r)
+		case "quoted-printable":
+			reader = quotedprintable.NewReader(r)
+		}
+		return io.ReadAll(reader)
+	}
+
 	// Check for multipart
 	mediatype, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
 	if err != nil {
 		// fallback: plain body
-		body, _ := io.ReadAll(msg.Body)
+		body, _ := decodeBody(msg.Body, msg.Header.Get("Content-Transfer-Encoding"))
 		email.Text = string(body)
 		return email, nil
 	}
@@ -65,7 +78,7 @@ func ParseEmail(raw string) (*EmailInfo, error) {
 				return nil, fmt.Errorf("multipart read: %w", err)
 			}
 
-			slurp, _ := io.ReadAll(p)
+			slurp, _ := decodeBody(p, p.Header.Get("Content-Transfer-Encoding"))
 
 			ct := p.Header.Get("Content-Type")
 			cd := p.Header.Get("Content-Disposition")
@@ -86,7 +99,7 @@ func ParseEmail(raw string) (*EmailInfo, error) {
 		}
 	} else {
 		// not multipart, just single body
-		body, _ := io.ReadAll(msg.Body)
+		body, _ := decodeBody(msg.Body, msg.Header.Get("Content-Transfer-Encoding"))
 		if strings.HasPrefix(mediatype, "text/html") {
 			email.HTML = string(body)
 		} else {

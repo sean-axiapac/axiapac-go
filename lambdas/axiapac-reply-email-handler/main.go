@@ -20,7 +20,7 @@ type SesNotification struct {
 	Content          string                    `json:"content"`
 }
 
-func ForwardToCustomer(email *helper.EmailInfo, messageID *string) error {
+func ForwardToCustomer(email *helper.EmailInfo, messageID *string) (string, error) {
 	// loop throw each email address until the email is forwarded
 	for _, address := range email.To {
 		customer := helper.FindCustomerNameFromAxiapacEmail(address)
@@ -30,18 +30,18 @@ func ForwardToCustomer(email *helper.EmailInfo, messageID *string) error {
 
 		customerEmail, err := helper.FindCustomerEmailByName(customer)
 		if err != nil {
-			return fmt.Errorf("unable to find email email address for customer %s: %w", customer, err)
+			return "", fmt.Errorf("unable to find email email address for customer %s: %w", customer, err)
 		}
 
 		to := strings.Join(email.To, ", ")
-		if err := helper.ForwardTo(email, customerEmail, messageID); err != nil {
-			return fmt.Errorf("unable to forward email to %s: %w", customerEmail, err)
+		if err := helper.ForwardTo(email, customerEmail, messageID, true); err != nil {
+			return "", fmt.Errorf("unable to forward email to %s: %w", customerEmail, err)
 		}
 		fmt.Printf("[INFO] email sent to %s forward to %s\n", to, customerEmail)
 
-		return nil
+		return customerEmail, nil
 	}
-	return fmt.Errorf("no customer matched for forwarded email %s", strings.Join(email.To, ", "))
+	return "", fmt.Errorf("no customer matched for forwarded email %s", strings.Join(email.To, ", "))
 }
 
 // Lambda handler function
@@ -85,19 +85,20 @@ func HandleRequest(ctx context.Context, event events.SNSEvent) error {
 			// receiving email send to no-reply@email.axiapac.net.au
 			if strings.Contains(to, helper.NO_REPLY_EMAIL) {
 				// forward to development
-				if err := helper.ForwardTo(email, helper.DEV_TEAM_EMAIL, &sesEvent.Mail.MessageID); err != nil {
+				if err := helper.ForwardTo(email, helper.DEV_TEAM_EMAIL, &sesEvent.Mail.MessageID, true); err != nil {
 					fmt.Printf("[ERROR] error while sending email to development team: %v\n", err)
 					hasError = true
 				}
 			} else {
-				err := ForwardToCustomer(email, &record.SNS.MessageID)
+				customerEmail, err := ForwardToCustomer(email, &record.SNS.MessageID)
 				// fall back to devops team
 				if err != nil {
-					if err := helper.ForwardTo(email, helper.DEVOPS_TEAM_EMAIL, &sesEvent.Mail.MessageID); err != nil {
+					if err := helper.ForwardTo(email, helper.DEVOPS_TEAM_EMAIL, &sesEvent.Mail.MessageID, true); err != nil {
 						fmt.Printf("[ERROR] error while sending email to devops team: %v\n", err)
 						hasError = true
 					}
 				}
+				fmt.Printf("[INFO] email forwarded to: %s\n", customerEmail)
 			}
 			continue
 		} else {

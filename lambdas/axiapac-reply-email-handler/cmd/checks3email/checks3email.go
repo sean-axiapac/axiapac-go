@@ -54,7 +54,8 @@ func CheckReplyEmailFromS3(messageId string) (*helper.EmailInfo, error) {
 
 func main() {
 	// err := ProcessReplyEmailNotification("./message.txt")
-	messageID := "uq63c20thts486b984ri2piavcdbtnpt76mjk101" // plain text email
+	// messageID := "uq63c20thts486b984ri2piavcdbtnpt76mjk101" // plain text email example
+	messageID := "ll6jn9df5j1rt4a3g9vku684cu324m2npm5ho8g1" // multipart/report email example
 	email, err := CheckReplyEmailFromS3(messageID)
 
 	if err != nil {
@@ -66,7 +67,14 @@ func main() {
 	fmt.Printf("Text: %s\n", email.Text)
 	fmt.Println("OK")
 
-	if err := helper.ForwardTo(email, "sean.tang@axiapac.com.au", &messageID); err != nil {
-		panic(err)
-	}
+	// fmt.Printf("HTML: %s\n", email.HTML)
+	// f, _ := helper.FindCustomerEmailByName("wtlmgt")
+
+	// fmt.Println(f)
+	// if err := helper.ForwardTo(email, f, &messageID, true); err != nil {
+	// 	panic(err)
+	// }
+	// if err := helper.ForwardTo(email, "sean.tang@axiapac.com.au", &messageID, false); err != nil {
+	// 	panic(err)
+	// }
 }

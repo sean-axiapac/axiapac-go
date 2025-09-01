@@ -34,7 +34,7 @@ func createOriginalInfo(email *EmailInfo, messageID *string, isHtml bool) string
 	return sb.String()
 }
 
-func ForwardTo(email *EmailInfo, address string, messageID *string) error {
+func ForwardTo(email *EmailInfo, address string, messageID *string, bccToDevops bool) error {
 	if email.HTML != "" {
 		email.HTML = createOriginalInfo(email, messageID, true) + email.HTML
 	}
@@ -42,7 +42,11 @@ func ForwardTo(email *EmailInfo, address string, messageID *string) error {
 	email.From = NO_REPLY_EMAIL
 	email.To = []string{address}
 	email.Cc = []string{}
-	email.Bcc = []string{DEVOPS_TEAM_EMAIL}
+	if bccToDevops {
+		email.Bcc = []string{DEVOPS_TEAM_EMAIL}
+	} else {
+		email.Bcc = []string{}
+	}
 
 	return SendEmail(context.Background(), email)
 }

@@ -10,30 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Replace with your real secret or public key if using asymmetric signing
-var jwtSecret = []byte("supersecretkey")
-
-func CreateJWT(deviceID string, duration time.Duration) (string, error) {
-	// Create claims
-	claims := jwt.MapClaims{
-		"device_id": deviceID,
-		"exp":       time.Now().Add(duration).Unix(), // expiration time
-		"iat":       time.Now().Unix(),               // issued at
-	}
-
-	// Create token
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	// Sign and return token string
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		return "", err
-	}
-
-	return tokenString, nil
-}
-
-func parseJwt(tokenStr string) (*jwt.Token, error) {
+func parseJwt(tokenStr string, jwtSecret []byte) (*jwt.Token, error) {
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		// Ensure the signing method is HMAC (or switch to RSA/ECDSA)
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -45,24 +22,33 @@ func parseJwt(tokenStr string) (*jwt.Token, error) {
 }
 
 // AuthMiddleware checks for a valid Bearer token
-func Authentication() gin.HandlerFunc {
+func Authentication(jwtSecret []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		tokenStr := ""
+
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
-		}
+			// Try to get from cookie
+			cookie, err := c.Cookie("axiapac.ApplicationCookie")
+			if err != nil {
+				// Cookie not found either
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
-		}
+			tokenStr = cookie
+		} else {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
 
-		tokenStr := parts[1]
+			tokenStr = parts[1]
+		}
 
 		// Parse and validate JWT
-		token, err := parseJwt(tokenStr)
+		token, err := parseJwt(tokenStr, jwtSecret)
 
 		if err != nil || !token.Valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, common.NewErrorResponse("invalid or expired token"))

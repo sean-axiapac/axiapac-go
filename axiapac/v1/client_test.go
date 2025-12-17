@@ -9,7 +9,7 @@ import (
 
 func TestTransportPost(t *testing.T) {
 
-	token, err := security.CreateIdentityToken(&security.Identity{
+	token, err := security.CreateIdentityToken(&security.AxiapacIdentity{
 		Id:       5,
 		UserName: "sean",
 		Provider: "local",
@@ -23,7 +23,7 @@ func TestTransportPost(t *testing.T) {
 	// Create transport with test server base URL
 	client := NewAxiapacClient("http://localhost", token)
 
-	dd, err := client.TimesheetEndpoint.Search(5)
+	dd, err := client.Timesheets.Search(5)
 	if err != nil {
 		t.Fatalf("failed to search timesheet: %v", err)
 	}

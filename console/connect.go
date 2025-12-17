@@ -19,7 +19,7 @@ func Connect(ctx context.Context) (*gorm.DB, error) {
 
 	}
 
-	dbconfig := utils.Find(databases, func(db *devops.DBEntry) bool {
+	dbconfig := utils.Find(databases, func(db devops.DBEntry) bool {
 		return db.Name == "console"
 	})
 	if dbconfig == nil {

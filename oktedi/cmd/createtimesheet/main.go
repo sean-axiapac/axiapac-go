@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	v1 "axiapac.com/axiapac/axiapac/v1"
@@ -19,8 +18,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
-
-//TODO: group records: records can be send by different devices, so we need to group them by employee and date
 
 var tz = time.FixedZone("AEST", 10*3600)
 
@@ -44,22 +41,48 @@ func CreateClient(url string) (*v1.AxiapacClient, error) {
 }
 
 type Converted struct {
-	group     *RecordGroup
+	source    *model.OktediTimesheet
 	timesheet *v1.TimesheetDTO
 	error     error
 }
 
-func ConvertRecords(db *gorm.DB, groups []*RecordGroup) ([]*Converted, error) {
+func ConvertTimesheets(db *gorm.DB, sources []model.OktediTimesheet) ([]*Converted, error) {
 	var converted []*Converted
 
 	var employees []models.Employee
 	if err := db.Model(&models.Employee{}).Find(&employees).Error; err != nil {
 		return converted, err
 	}
+	empMap := make(map[int32]models.Employee)
+	for _, e := range employees {
+		empMap[e.EmployeeID] = e
+	}
 
 	var labourrates []models.LabourRate
 	if err := db.Model(&models.LabourRate{}).Find(&labourrates).Error; err != nil {
 		return converted, err
+	}
+	lrMap := make(map[int32]models.LabourRate) // LabourRateID -> LabourRate
+	for _, l := range labourrates {
+		lrMap[l.LabourRateID] = l
+	}
+
+	var jobs []models.Job
+	if err := db.Model(&models.Job{}).Find(&jobs).Error; err != nil {
+		return converted, err
+	}
+	jobMap := make(map[int32]models.Job)
+	for _, j := range jobs {
+		jobMap[j.JobID] = j
+	}
+
+	var costCentres []models.CostCentre
+	if err := db.Model(&models.CostCentre{}).Find(&costCentres).Error; err != nil {
+		return converted, err
+	}
+	ccMap := make(map[int32]models.CostCentre)
+	for _, c := range costCentres {
+		ccMap[c.CostCentreID] = c
 	}
 
 	var timeType *models.PayrollTimeType
@@ -67,18 +90,17 @@ func ConvertRecords(db *gorm.DB, groups []*RecordGroup) ([]*Converted, error) {
 		return converted, fmt.Errorf("failed to find payroll time type ORD: %w", err)
 	}
 
-	for _, g := range groups {
-		// fmt.Printf("record: %s %s %s\n", r.ID, r.Date, r.EmployeeID)
-
-		dto, err := ConvertRecord(db, employees, labourrates, timeType, g)
+	for i := range sources {
+		source := &sources[i]
+		dto, err := ConvertTimesheet(db, empMap, lrMap, jobMap, ccMap, timeType, source)
 		if err != nil {
 			converted = append(converted, &Converted{
-				group: g,
-				error: err,
+				source: source,
+				error:  err,
 			})
 		} else {
 			converted = append(converted, &Converted{
-				group:     g,
+				source:    source,
 				timesheet: dto,
 			})
 		}
@@ -87,47 +109,39 @@ func ConvertRecords(db *gorm.DB, groups []*RecordGroup) ([]*Converted, error) {
 	return converted, nil
 }
 
-func ConvertRecord(db *gorm.DB, employees []models.Employee, labourrates []models.LabourRate, timeType *models.PayrollTimeType, r *RecordGroup) (*v1.TimesheetDTO, error) {
-	emp := utils.Find(employees, func(e models.Employee) bool {
-		return strconv.FormatInt(int64(e.EmployeeID), 10) == r.EmployeeID
-	})
+func ConvertTimesheet(
+	db *gorm.DB,
+	empMap map[int32]models.Employee,
+	lrMap map[int32]models.LabourRate,
+	jobMap map[int32]models.Job,
+	ccMap map[int32]models.CostCentre,
+	timeType *models.PayrollTimeType,
+	source *model.OktediTimesheet,
+) (*v1.TimesheetDTO, error) {
 
-	if emp == nil {
-		return nil, fmt.Errorf("employee not found: %s", r.EmployeeID)
+	emp, ok := empMap[source.EmployeeID]
+	if !ok {
+		return nil, fmt.Errorf("employee not found: %d", source.EmployeeID)
 	}
 
-	labourRate := utils.Find(labourrates, func(l models.LabourRate) bool {
-		return l.LabourRateID == emp.LabourRateID
-	})
-	if labourRate == nil {
-		return nil, fmt.Errorf("employee %s doesn't have a Usual Chargeout Rate defined in Axiapac", emp.Code)
+	labourRate, ok := lrMap[emp.LabourRateID]
+	if !ok {
+		return nil, fmt.Errorf("employee %s doesn't have a Labour Rate defined (id=%d)", emp.Code, emp.LabourRateID)
 	}
 
-	rate, err := core.CalcEmployeeRate(db, emp, labourRate, timeType)
+	rate, err := core.CalcEmployeeRate(db, &emp, &labourRate, timeType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate employee rate: %w", err)
 	}
 
-	date, err := utils.ParseISOTime(r.Date)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse record date: %w", err)
-	}
-	start, err := utils.ParseISOTime(r.GetClockIn())
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse clock-in time: %w", err)
-	}
-	finish, err := utils.ParseISOTime(r.GetClockOut())
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse clock-out time: %w", err)
-	}
-	duration := finish.Sub(*start)
-	hours := duration.Hours()
+	date := source.Date
+	hours := source.Hours
 
 	dto := &v1.TimesheetDTO{
 		ID:             0,
 		EraId:          eraid.Draft,
 		Employee:       common.IdCodeDTO{ID: emp.EmployeeID, Code: emp.Code},
-		Date:           date.In(tz).Format("2006-01-02"),
+		Date:           date.Format("2006-01-02"),
 		PaidHours:      hours,
 		WorkedHours:    utils.Ptr(hours),
 		TimesheetItems: []v1.TimesheetItemDTO{},
@@ -139,21 +153,47 @@ func ConvertRecord(db *gorm.DB, employees []models.Employee, labourrates []model
 		Hours:           hours,
 		ChargeHours:     hours,
 		PayrollTimeType: &common.IdCodeDTO{Code: "ORD"},
-		StartTime:       utils.Ptr(start.In(tz).Format("15:04")),
-		FinishTime:      utils.Ptr(finish.In(tz).Format("15:04")),
 	}
 
-	if labourRate != nil {
-		item.LabourRate = &common.IdCodeDTO{Code: labourRate.Code}
+	// Default start time to 08:00
+	start := time.Date(date.Year(), date.Month(), date.Day(), 8, 0, 0, 0, tz)
+	finish := start.Add(time.Duration(hours * float64(time.Hour)))
+
+	item.StartTime = utils.Ptr(start.Format("15:04"))
+	item.FinishTime = utils.Ptr(finish.Format("15:04"))
+
+	item.LabourRate = &common.IdCodeDTO{Code: labourRate.Code}
+
+	// Resolve Job (Required)
+	var jobID int32
+	if source.ProjectID != nil {
+		jobID = *source.ProjectID
+	} else if emp.JobID != 0 {
+		jobID = emp.JobID
 	}
 
-	job := r.GetJob()
-	if job != "" {
-		item.Job = &common.JobNoDTO{JobNo: job}
+	if jobID == 0 {
+		return nil, fmt.Errorf("job is required (source project_id is nil and employee default job_id is 0)")
 	}
-	subjob := r.GetSubjob()
-	if subjob != "" {
-		item.CostCentre = &common.FullCodeDTO{FullCode: subjob}
+
+	if job, ok := jobMap[jobID]; ok {
+		item.Job = &common.JobNoDTO{JobNo: job.JobNo}
+	} else {
+		return nil, fmt.Errorf("job not found for ID: %d", jobID)
+	}
+
+	// Resolve Cost Centre (Optional, but with default)
+	var ccID int32
+	if source.CostCentreId != nil {
+		ccID = *source.CostCentreId
+	} else if emp.CostCentreID != 0 {
+		ccID = emp.CostCentreID
+	}
+
+	if ccID != 0 {
+		if cc, ok := ccMap[ccID]; ok {
+			item.CostCentre = &common.FullCodeDTO{FullCode: cc.Code}
+		}
 	}
 
 	dto.TimesheetItems = append(dto.TimesheetItems, *item)
@@ -161,10 +201,10 @@ func ConvertRecord(db *gorm.DB, employees []models.Employee, labourrates []model
 	return dto, nil
 }
 
-func ProcessRecords(db *gorm.DB, client *v1.AxiapacClient, groups []*RecordGroup) error {
+func ProcessTimesheets(db *gorm.DB, client *v1.AxiapacClient, sources []model.OktediTimesheet) error {
 	// convert records to timesheets
-	fmt.Printf("converting %d record groups to timesheets\n", len(groups))
-	converted, err := ConvertRecords(db, groups)
+	fmt.Printf("converting %d oktedi timesheets\n", len(sources))
+	converted, err := ConvertTimesheets(db, sources)
 	if err != nil {
 		return err
 	}
@@ -173,69 +213,68 @@ func ProcessRecords(db *gorm.DB, client *v1.AxiapacClient, groups []*RecordGroup
 	total := len(converted)
 	success := 0
 	failed := 0
+
 	for idx, data := range converted {
-		recordIDs := utils.Map(data.group.Records, func(r *model.ClockinRecord) string { return r.ID })
-		fmt.Printf("[RECORD] (%d/%d) %s %s %s ==========\n", idx+1, total, recordIDs, data.group.Date, data.group.EmployeeID)
+		source := data.source
+		fmt.Printf("[TS] (%d/%d) ID=%d Date=%s EmpID=%d ==========\n", idx+1, total, source.ID, source.Date.Format("2006-01-02"), source.EmployeeID)
+
 		if data.error != nil {
-			fmt.Printf("[ERROR] error converting record: %v\n", data.error)
-			db.Model(&model.ClockinRecord{}).
-				Where("id IN ?", recordIDs).
-				Updates(&model.ClockinRecord{ProcessStatus: "error"})
+			fmt.Printf("[ERROR] error converting: %v\n", data.error)
 			failed++
 			continue
 		}
 		ts := data.timesheet
 
-		attached := models.Timesheet{}
-		if err := db.Model(&models.Timesheet{}).Where(&models.Timesheet{EmployeeID: ts.Employee.ID}).
-			Where("date = ?", ts.Date).
-			Where("eraid!= ?", eraid.Deleted).
-			First(&attached).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			fmt.Printf("[ERROR] error fetching timesheet: %v\n", err)
-			db.Model(&model.ClockinRecord{}).
-				Where("id IN ?", recordIDs).
-				Updates(&model.ClockinRecord{ProcessStatus: "error"})
+		// Check if timesheet already exists
+		existing := models.Timesheet{}
+		err := db.Model(&models.Timesheet{}).
+			Where("EmployeeId = ?", ts.Employee.ID).
+			Where("Date = ?", ts.Date).
+			First(&existing).Error
+
+		if err == nil {
+			// Found existing timesheet
+			if existing.EraID == int32(eraid.Draft) {
+				// It's a draft, so we can update it
+				ts.ID = int(existing.TimesheetID)
+				fmt.Printf("[UPDATE] updating existing DRAFT timesheet ID=%d\n", ts.ID)
+			} else {
+				// It's not a draft, error out
+				fmt.Printf("[ERROR] timesheet already exists and is not draft (ID=%d, EraID=%d)\n", existing.TimesheetID, existing.EraID)
+				failed++
+				continue
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			// DB Error
+			fmt.Printf("[ERROR] database error checking existing timesheet: %v\n", err)
 			failed++
 			continue
 		}
 
-		if attached.TimesheetID != 0 && attached.EraID != int32(eraid.Draft) {
-			fmt.Printf("[ERROR] timesheet already exists (EraId=%d) for employee %s on %s, skipping\n", attached.EraID, ts.Employee.Code, ts.Date)
-			db.Model(&model.ClockinRecord{}).
-				Where("id IN ?", recordIDs).
-				Updates(&model.ClockinRecord{ProcessStatus: "skipped"})
-			failed++
-			continue
-		}
-		ts.ID = int(attached.TimesheetID) // if draft exists, update it
-
-		// r := data.record
-		fmt.Printf("[SAVE] %s timesheet (%d): %s %s %.f %v %v %s %s\n", utils.FormatBoolean(ts.ID != 0, "update", "create"), ts.ID, ts.Employee.Code, ts.Date, ts.PaidHours,
-			ts.TimesheetItems[0].StartTime, ts.TimesheetItems[0].FinishTime,
-			utils.Format(ts.TimesheetItems[0].Job), ts.TimesheetItems[0].CostCentre)
+		// Proceed to Save (Create or Update)
+		fmt.Printf("[SAVE] %s timesheet: %s %s %.2f\n",
+			utils.FormatBoolean(ts.ID != 0, "update", "create"),
+			ts.Employee.Code, ts.Date, ts.PaidHours)
 
 		// save timesheet
 		res, err := client.Timesheets.Save(ts)
 		if err != nil {
 			fmt.Printf("[ERROR] request failed: %v\n", err)
-			db.Model(&model.ClockinRecord{}).
-				Where("id IN ?", recordIDs).
-				Updates(&model.ClockinRecord{ProcessStatus: "error"})
 			failed++
 			continue
 		}
 
 		if res.Status {
 			fmt.Printf("[SUCCESS] timesheet saved: timesheetId=%d\n", res.Data.ID)
-			db.Model(&model.ClockinRecord{}).
-				Where("id IN ?", recordIDs).
-				Updates(&model.ClockinRecord{ProcessStatus: "processed"})
+			// Update source with new ID
+			if err := db.Model(&model.OktediTimesheet{}).
+				Where("id = ?", source.ID).
+				Updates(map[string]interface{}{"timesheet_id": res.Data.ID}).Error; err != nil {
+				fmt.Printf("[ERROR] failed to update source link: %v\n", err)
+			}
 			success++
 		} else {
 			fmt.Printf("[ERROR] save failed: %v\n", res.Error)
-			db.Model(&model.ClockinRecord{}).
-				Where("id IN ?", recordIDs).
-				Updates(&model.ClockinRecord{ProcessStatus: "error"})
 			failed++
 		}
 	}
@@ -245,76 +284,21 @@ func ProcessRecords(db *gorm.DB, client *v1.AxiapacClient, groups []*RecordGroup
 	return nil
 }
 
-type RecordGroup struct {
-	EmployeeID string
-	Date       string
-	Records    []*model.ClockinRecord
-}
+func Run(db *gorm.DB, client *v1.AxiapacClient, date *time.Time) error {
+	// get approved timesheets not yet synced
+	var sources []model.OktediTimesheet
+	query := db.Model(&model.OktediTimesheet{}).
+		Where("approved = ?", true) //.Where("timesheet_id IS NULL")
 
-func (rg *RecordGroup) GetClockIn() string {
-	if len(rg.Records) == 0 {
-		return ""
+	if date != nil {
+		query = query.Where("date = ?", date.Format("2006-01-02"))
 	}
-	utils.Filter(rg.Records, func(r *model.ClockinRecord) bool { return r.ClockIn != "" })
-	// utils.Map(rg.Records)
-	return rg.Records[0].ClockIn
-}
 
-func (rg *RecordGroup) GetClockOut() string {
-	if len(rg.Records) == 0 {
-		return ""
-	}
-	return rg.Records[len(rg.Records)-1].ClockOut
-}
-
-func (rg *RecordGroup) GetJob() string {
-	if len(rg.Records) == 0 {
-		return ""
-	}
-	return rg.Records[0].Job
-}
-
-func (rg *RecordGroup) GetSubjob() string {
-	if len(rg.Records) == 0 {
-		return ""
-	}
-	return rg.Records[0].Subjob
-}
-
-func PrepareRecords(records []*model.ClockinRecord) []*RecordGroup {
-	// group by date
-	var groups []*RecordGroup
-	dategroups := utils.GroupBy(records, func(r *model.ClockinRecord) string { return r.Date })
-
-	for date, recs := range dategroups {
-		// group by employeeID
-		employeegroups := utils.GroupBy(recs, func(r *model.ClockinRecord) string { return r.EmployeeID })
-		for empID, r2 := range employeegroups {
-			rg := &RecordGroup{
-				EmployeeID: empID,
-				Date:       date,
-				Records:    r2,
-			}
-			groups = append(groups, rg)
-		}
-	}
-	return groups
-}
-
-func Run(db *gorm.DB, client *v1.AxiapacClient, date time.Time) error {
-	// get target records
-	var records []*model.ClockinRecord
-	if err := db.Model(&model.ClockinRecord{}).
-		Where(&model.ClockinRecord{ProcessStatus: "pending"}).
-		Where("date <= ?", date.Format("2006-01-02")).
-		Find(&records).Error; err != nil {
+	if err := query.Find(&sources).Error; err != nil {
 		return err
 	}
 
-	// prepare records
-	groups := PrepareRecords(records)
-
-	return ProcessRecords(db, client, groups)
+	return ProcessTimesheets(db, client, sources)
 }
 
 func main() {
@@ -329,8 +313,9 @@ func main() {
 		return
 	}
 
-	yesterday := utils.BrisbaneNow().AddDate(0, 0, -1)
-	if err := Run(db, client, yesterday); err != nil {
+	// Optional: pass date as arg or filter
+	// For now, process all pending approved
+	if err := Run(db, client, utils.Ptr(utils.MustParseDate("2025-12-17"))); err != nil {
 		fmt.Println("error:", err)
 	}
 }

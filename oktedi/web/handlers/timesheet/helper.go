@@ -2,6 +2,8 @@ package timesheet
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -44,30 +46,128 @@ func (dto OktediTimesheetDTO) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func SearchTimesheets(db *gorm.DB, startDate, endDate string, supervisors, projects, employees []int32, limit, offset int) ([]OktediTimesheetDTO, int64, error) {
+func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]OktediTimesheetDTO, int64, error) {
 	var results []OktediTimesheetDTO
 
 	query := db.Table("oktedi_timesheets t1").
-		Select(`t1.*,
-	        e.*`).
-		Joins("LEFT OUTER JOIN timesheets t ON t.timesheetid = t1.id").
+		Select(`t1.*, e.EmployeeId, e.Code, e.FirstName, e.Surname, concat(j.jobNo, '/',cc.code) as assignments`).
 		Joins("JOIN employees e ON e.employeeid = t1.employee_id").
-		Where("t1.date BETWEEN ? AND ?", startDate, endDate)
+		Joins("LEFT JOIN jobs j ON j.jobid = t1.project_id").
+		Joins("LEFT JOIN costcentres cc ON cc.costcentreid = t1.cost_centre_id").
+		Where("t1.date BETWEEN ? AND ?", params.StartDate.Time.Format("2006-01-02"), params.EndDate.Time.Format("2006-01-02"))
 
-	if len(projects) > 0 {
-		query = query.Where("t1.project_id IN ?", projects)
+	if len(params.Projects) > 0 {
+		query = query.Where("t1.project_id IN ?", params.Projects)
 	}
-	if len(supervisors) > 0 {
-		query = query.Where("e.reportstoid IN ?", supervisors)
+	if len(params.Supervisors) > 0 {
+		query = query.Where("e.reportstoid IN ?", params.Supervisors)
 	}
-	if len(employees) > 0 {
-		query = query.Where("t1.employee_id IN ?", employees)
+	if len(params.Employees) > 0 {
+		query = query.Where("t1.employee_id IN ?", params.Employees)
+	}
+
+	// Apply Filters
+	fieldMap := map[string]string{
+		"id":           "t1.id",
+		"date":         "t1.date",
+		"hours":        "t1.hours",
+		"reviewStatus": "t1.review_status",
+		"approved":     "t1.approved",
+		"employeeCode": "e.Code",
+		"firstName":    "e.FirstName",
+		"surname":      "e.Surname",
+		"employeeId":   "t1.employee_id",
+		"projectId":    "t1.project_id",
+
+		// UI custom fields
+		"name":        "concat(e.FirstName, ' ', e.Surname)",
+		"assignments": "concat(j.jobNo, '/',cc.code)",
+	}
+
+	// Apply Filters
+	if params.Filters != nil && len(params.Filters.Filters) > 0 {
+		logic := strings.ToLower(params.Filters.Logic)
+		if logic != "and" && logic != "or" {
+			logic = "and" // default to AND
+		}
+
+		var conditions []string
+		var values []interface{}
+
+		for _, f := range params.Filters.Filters {
+			dbField, ok := fieldMap[f.Field]
+			if !ok {
+				continue
+			}
+
+			var condition string
+			switch strings.ToLower(f.Operator) {
+			case "eq":
+				condition = fmt.Sprintf("%s = ?", dbField)
+				values = append(values, f.Value)
+			case "neq":
+				condition = fmt.Sprintf("%s != ?", dbField)
+				values = append(values, f.Value)
+			case "gt":
+				condition = fmt.Sprintf("%s > ?", dbField)
+				values = append(values, f.Value)
+			case "gte":
+				condition = fmt.Sprintf("%s >= ?", dbField)
+				values = append(values, f.Value)
+			case "lt":
+				condition = fmt.Sprintf("%s < ?", dbField)
+				values = append(values, f.Value)
+			case "lte":
+				condition = fmt.Sprintf("%s <= ?", dbField)
+				values = append(values, f.Value)
+			case "contains":
+				condition = fmt.Sprintf("%s LIKE ?", dbField)
+				values = append(values, fmt.Sprintf("%%%v%%", f.Value))
+			case "in":
+				condition = fmt.Sprintf("%s IN ?", dbField)
+				values = append(values, f.Value)
+			default:
+				continue
+			}
+
+			if condition != "" {
+				conditions = append(conditions, condition)
+			}
+		}
+
+		if len(conditions) > 0 {
+			if logic == "or" {
+				query = query.Where(strings.Join(conditions, " OR "), values...)
+			} else {
+				// For AND, we can apply each condition separately for better query optimization
+				for i, condition := range conditions {
+					query = query.Where(condition, values[i])
+				}
+			}
+		}
 	}
 
 	// count
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
+	}
+
+	// Apply Sorts
+	for _, s := range params.Sorts {
+		dbField, ok := fieldMap[s.Field]
+		if !ok {
+			continue
+		}
+		direction := "ASC"
+		if s.Dir == "desc" {
+			direction = "DESC"
+		}
+		query = query.Order(fmt.Sprintf("%s %s", dbField, direction))
+	}
+
+	if len(params.Sorts) == 0 {
+		query = query.Order("t1.date DESC, e.Surname ASC")
 	}
 
 	query = query.Limit(limit).Offset(offset)

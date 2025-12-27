@@ -205,7 +205,7 @@ func main() {
 				Tag string `json:"tag"`
 			}
 			if err := c.ShouldBindJSON(&body); err != nil {
-				c.JSON(http.StatusBadRequest, common.NewErrorResponse("Invalid request body"))
+				c.JSON(http.StatusBadRequest, common.NewErrorResponse(common.FormatBindingError(err)))
 				return
 			}
 			ctx := c.Request.Context()

@@ -184,8 +184,8 @@ func ConvertTimesheet(
 
 	// Resolve Cost Centre (Optional, but with default)
 	var ccID int32
-	if source.CostCentreId != nil {
-		ccID = *source.CostCentreId
+	if source.CostCentreID != nil {
+		ccID = *source.CostCentreID
 	} else if emp.CostCentreID != 0 {
 		ccID = emp.CostCentreID
 	}

@@ -103,7 +103,7 @@ func Run(db *gorm.DB, date time.Time) error {
 
 	// 3. Process Records
 	// Map EmployeeID -> OktediTimesheet
-	timesheetMap := make(map[int32]model.OktediTimesheet)
+	timesheetMap := make(map[int32]*model.OktediTimesheet)
 
 	// Track ClockIn IDs for status updates
 	processedClockInIDs := make([]string, 0)
@@ -140,10 +140,10 @@ func Run(db *gorm.DB, date time.Time) error {
 
 		// Map Wbs to CostCentreID
 		if cc, ok := ccMap[rec.Wbs]; ok {
-			ts.CostCentreId = utils.Ptr(cc.CostCentreID)
+			ts.CostCentreID = utils.Ptr(cc.CostCentreID)
 		}
 
-		timesheetMap[empID] = ts
+		timesheetMap[empID] = &ts
 	}
 
 	// Process ClockIn Records (Precedence: Low)
@@ -198,8 +198,20 @@ func Run(db *gorm.DB, date time.Time) error {
 			Approved:     false,
 		}
 
-		timesheetMap[emp.EmployeeID] = ts
+		timesheetMap[emp.EmployeeID] = &ts
 		processedClockInIDs = append(processedClockInIDs, groupIDs...)
+	}
+
+	// use employee default job and costcentre if not set
+	for _, ts := range timesheetMap {
+		emp := empMap[ts.EmployeeID]
+		if ts.ProjectID == nil {
+			ts.ProjectID = &emp.JobID
+		}
+
+		if ts.CostCentreID == nil {
+			ts.CostCentreID = &emp.CostCentreID
+		}
 	}
 
 	// 4. Persist to DB using Upsert
@@ -219,7 +231,7 @@ func Run(db *gorm.DB, date time.Time) error {
 			existingMap[et.EmployeeID] = et.ID
 		}
 
-		var timesheets []model.OktediTimesheet
+		var timesheets []*model.OktediTimesheet
 		for _, ts := range timesheetMap {
 			if id, exists := existingMap[ts.EmployeeID]; exists {
 				ts.ID = id // Set ID to trigger Update

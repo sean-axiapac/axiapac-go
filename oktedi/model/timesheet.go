@@ -26,7 +26,7 @@ type OktediTimesheet struct {
 	EmployeeID   int32  `gorm:"column:employee_id;not null"`
 	TimesheetID  *int32 `gorm:"column:timesheet_id;null"`
 	ProjectID    *int32 `gorm:"column:project_id;null"`
-	CostCentreId *int32 `gorm:"column:cost_centre_id;null"`
+	CostCentreID *int32 `gorm:"column:cost_centre_id;null"`
 
 	Timesheet  models.Timesheet     `gorm:"foreignKey:TimesheetID;references:TimesheetId"`
 	Employee   models.Employee      `gorm:"foreignKey:EmployeeID;references:EmployeeId"`

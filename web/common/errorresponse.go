@@ -1,12 +1,17 @@
 package common
 
-type ErrorResponse struct {
+type Error struct {
 	// Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
+type ErrorResponse struct {
+	// Code    int    `json:"code"`
+	Error *Error `json:"error"`
+}
+
 func NewErrorResponse(message string) *ErrorResponse {
 	return &ErrorResponse{
-		Message: message,
+		Error: &Error{Message: message},
 	}
 }

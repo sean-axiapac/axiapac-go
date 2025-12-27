@@ -3,8 +3,10 @@ package timesheet
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"axiapac.com/axiapac/core"
+	oktedi "axiapac.com/axiapac/oktedi/core"
 	"axiapac.com/axiapac/oktedi/model"
 	common "axiapac.com/axiapac/oktedi/web/common"
 	web "axiapac.com/axiapac/web/common"
@@ -18,56 +20,12 @@ type Endpoint struct {
 func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 	endpoint := &Endpoint{base: common.Handler{Dm: dm}}
 	r.POST("/timesheets/search", endpoint.Search)
+	r.PUT("/timesheets/:id", endpoint.Update)
 	// r.GET("/owner-disbursments/:id", endpoint.Find)
 	// r.GET("/owner-disbursments/:id/statements", endpoint.ListStatements)
 
-	r.PUT("/timesheets/:id", endpoint.Update)
-}
-
-type SearchParams struct {
-	StartDate   *web.DateOnly `json:"startDate" binding:"required"`
-	EndDate     *web.DateOnly `json:"endDate" binding:"required"`
-	Supervisors []int32       `json:"supervisors"`
-	Projects    []int32       `json:"projects"`
-	Employees   []int32       `json:"employees"`
-}
-
-func (ep *Endpoint) Search(c *gin.Context) {
-	var searchParams SearchParams
-
-	// Parse JSON body
-	if err := c.ShouldBindJSON(&searchParams); err != nil {
-		c.JSON(http.StatusBadRequest, web.NewErrorResponse(err.Error()))
-		return
-	}
-
-	// get limit, offset from query params
-	limit := 1000
-	offset := 0
-	if val, err := strconv.Atoi(c.Query("limit")); err == nil {
-		limit = val
-	}
-	if val, err := strconv.Atoi(c.Query("offset")); err == nil {
-		offset = val
-	}
-
-	db, conn, err := ep.base.GetDB(c)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
-		return
-	}
-	defer conn.Close()
-
-	// timesheets, err := GetTimesheets(db, searchParams.StartDate.Time, searchParams.EndDate.Time, searchParams.Supervisors, searchParams.Projects, searchParams.Employees)
-	timesheets, total, err := SearchTimesheets(db, searchParams.StartDate.Time.Format("2006-01-02"), searchParams.EndDate.Time.Format("2006-01-02"), searchParams.Supervisors, searchParams.Projects, searchParams.Employees,
-		limit, offset)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
-		return
-	}
-
-	c.JSON(http.StatusOK, web.NewSearchResponse(timesheets, total))
+	// convert records to oktedi timesheets
+	r.POST("/timesheets", endpoint.ProcessClockInRecords)
 }
 
 type OktediTimesheetUpdateDTO struct {
@@ -87,7 +45,7 @@ func (ep *Endpoint) Update(c *gin.Context) {
 
 	var updateDTO OktediTimesheetUpdateDTO
 	if err := c.ShouldBindJSON(&updateDTO); err != nil {
-		c.JSON(http.StatusBadRequest, web.NewErrorResponse(err.Error()))
+		c.JSON(http.StatusBadRequest, web.NewErrorResponse(web.FormatBindingError(err)))
 		return
 	}
 
@@ -100,6 +58,43 @@ func (ep *Endpoint) Update(c *gin.Context) {
 
 	// Update the timesheet in the database
 	if err := db.Model(&model.OktediTimesheet{}).Where("id = ?", id).Updates(updateDTO).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, web.NewSuccessResponse(gin.H{}))
+}
+
+type ClockInRecordsProcessParamsDTO struct {
+	Date *string `json:"date,omitempty"`
+}
+
+func (ep *Endpoint) ProcessClockInRecords(c *gin.Context) {
+	// get date from body
+	var params ClockInRecordsProcessParamsDTO
+	if err := c.ShouldBindJSON(&params); err != nil {
+		c.JSON(http.StatusBadRequest, web.NewErrorResponse(web.FormatBindingError(err)))
+		return
+	}
+	// convert params.Date to time.Date
+	var date *time.Time
+	if params.Date != nil {
+		todate, err := time.Parse("2006-01-02", *params.Date)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, web.NewErrorResponse(err.Error()))
+			return
+		}
+		date = &todate
+	}
+
+	db, conn, err := ep.base.GetDB(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+		return
+	}
+	defer conn.Close()
+
+	if err := oktedi.ProcessClockInRecords(db, *date); err != nil {
 		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
 		return
 	}

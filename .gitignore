@@ -22,3 +22,5 @@ dist/
 .idea/
 .DS_Store
 .*
+# Go debug files
+__debug*

@@ -21,6 +21,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect database: %v", err)
 	}
+	mockOktediTimesheets(db)
+}
+
+func mockOktediTimesheets(db *gorm.DB) {
 
 	startDate := time.Date(2025, 12, 15, 0, 0, 0, 0, time.UTC)
 	endDate := time.Date(2025, 12, 21, 0, 0, 0, 0, time.UTC)

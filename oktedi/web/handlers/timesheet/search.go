@@ -61,7 +61,7 @@ func (ep *Endpoint) Search(c *gin.Context) {
 	defer conn.Close()
 
 	// timesheets, err := GetTimesheets(db, searchParams.StartDate.Time, searchParams.EndDate.Time, searchParams.Supervisors, searchParams.Projects, searchParams.Employees)
-	timesheets, total, err := SearchTimesheets(db, searchParams, limit, offset)
+	timesheets, total, err := SearchTimesheets2(db, searchParams, limit, offset)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))

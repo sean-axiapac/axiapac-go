@@ -8,6 +8,7 @@ import (
 	"axiapac.com/axiapac/core/models"
 	"axiapac.com/axiapac/oktedi/model"
 	"axiapac.com/axiapac/utils"
+	"github.com/google/uuid"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -21,13 +22,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect database: %v", err)
 	}
-	mockOktediTimesheets(db)
+
+	startDate := time.Date(2025, 12, 22, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2025, 12, 28, 0, 0, 0, 0, time.UTC)
+
+	// mockOktediTimesheets(db, startDate, endDate)
+	mockClockinRecords(db, startDate, endDate)
 }
 
-func mockOktediTimesheets(db *gorm.DB) {
-
-	startDate := time.Date(2025, 12, 15, 0, 0, 0, 0, time.UTC)
-	endDate := time.Date(2025, 12, 21, 0, 0, 0, 0, time.UTC)
+func mockOktediTimesheets(db *gorm.DB, startDate, endDate time.Time) {
 
 	// Fetch employees in the specified range
 	var employees []models.Employee
@@ -71,4 +74,58 @@ func mockOktediTimesheets(db *gorm.DB) {
 	}
 
 	fmt.Println("Successfully inserted mock timesheets.")
+}
+
+func mockClockinRecords(db *gorm.DB, startDate, endDate time.Time) {
+	// Fetch employees in the specified range
+	var employees []models.Employee
+	if err := db.Where("EmployeeId BETWEEN ? AND ?", 101, 300).Find(&employees).Error; err != nil {
+		log.Fatalf("failed to fetch employees for clockin: %v", err)
+	}
+
+	var records []model.ClockinRecord
+
+	for _, emp := range employees {
+		if emp.IdentificationTag == "" {
+			continue // skip employees without tag
+		}
+
+		for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+			dateStr := d.Format("2006-01-02")
+
+			// Clock In
+			records = append(records, model.ClockinRecord{
+				ID:            uuid.New().String(),
+				Tag:           emp.IdentificationTag,
+				Date:          dateStr,
+				Kind:          "in",
+				Timestamp:     d.Add(8 * time.Hour).Format(time.RFC3339),
+				ProcessStatus: "pending",
+			})
+
+			// Clock Out
+			records = append(records, model.ClockinRecord{
+				ID:            uuid.New().String(),
+				Tag:           emp.IdentificationTag,
+				Date:          dateStr,
+				Kind:          "out",
+				Timestamp:     d.Add(16 * time.Hour).Format(time.RFC3339),
+				ProcessStatus: "pending",
+			})
+		}
+	}
+
+	if len(records) == 0 {
+		fmt.Println("No records to insert for clockin.")
+		return
+	}
+
+	fmt.Printf("Inserting %d mock clockin records for %d employees...\n", len(records), len(employees))
+
+	// Batch insert
+	if err := db.CreateInBatches(records, 100).Error; err != nil {
+		log.Fatalf("failed to insert mock clockin records: %v", err)
+	}
+
+	fmt.Println("Successfully inserted mock clockin records.")
 }

@@ -26,6 +26,7 @@ func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 
 	// convert records to oktedi timesheets
 	r.POST("/timesheets", endpoint.ProcessClockInRecords)
+	r.POST("/timesheets/prepare", endpoint.Prepare)
 }
 
 type OktediTimesheetUpdateDTO struct {

@@ -11,7 +11,31 @@ import (
 	"gorm.io/gorm"
 )
 
+type PrepareOptions struct {
+	StartDate   time.Time
+	EndDate     time.Time
+	Supervisors []int32
+	Employees   []int32
+}
+
+func Prepare(db *gorm.DB, opts PrepareOptions) error {
+	// iterate through each day in the range
+	for d := opts.StartDate; !d.After(opts.EndDate); d = d.AddDate(0, 0, 1) {
+		if err := ProcessClockInRecordsWithFilters(db, d, opts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func ProcessClockInRecords(db *gorm.DB, date time.Time) error {
+	return ProcessClockInRecordsWithFilters(db, date, PrepareOptions{
+		StartDate: date,
+		EndDate:   date,
+	})
+}
+
+func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareOptions) error {
 	dateStr := date.Format("2006-01-02")
 
 	// 1. Fetch Reference Data
@@ -50,12 +74,59 @@ func ProcessClockInRecords(db *gorm.DB, date time.Time) error {
 	// 2. Fetch Records
 	fmt.Println("Fetching records...")
 	var supervisorRecords []model.SupervisorRecord
-	if err := db.Where("date = ?", dateStr).Find(&supervisorRecords).Error; err != nil {
+	supQuery := db.Where("date = ?", dateStr)
+	if len(opts.Supervisors) > 0 {
+		supQuery = supQuery.Where("supervisor_id IN ?", opts.Supervisors)
+	}
+	if len(opts.Employees) > 0 {
+		supQuery = supQuery.Where("employee_id IN ?", opts.Employees)
+	}
+
+	if err := supQuery.Find(&supervisorRecords).Error; err != nil {
 		return fmt.Errorf("failed to fetch supervisor records: %w", err)
 	}
 
 	var clockInRecords []*model.ClockinRecord
-	if err := db.Where("date = ? AND process_status = ?", dateStr, "pending").Find(&clockInRecords).Error; err != nil {
+	clkQuery := db.Where("date = ?", dateStr)
+	// For clockin records, we only have the tag. We need to filter by employees if specified.
+	if len(opts.Employees) > 0 || len(opts.Supervisors) > 0 {
+		var validTags []string
+		for _, e := range employees {
+			match := true
+			if len(opts.Employees) > 0 {
+				found := false
+				for _, eid := range opts.Employees {
+					if e.EmployeeID == eid {
+						found = true
+						break
+					}
+				}
+				match = match && found
+			}
+			if len(opts.Supervisors) > 0 {
+				found := false
+				for _, sid := range opts.Supervisors {
+					if e.ReportsToID == sid {
+						found = true
+						break
+					}
+				}
+				match = match && found
+			}
+
+			if match && e.IdentificationTag != "" {
+				validTags = append(validTags, e.IdentificationTag)
+			}
+		}
+
+		if len(validTags) > 0 {
+			clkQuery = clkQuery.Where("tag IN ?", validTags)
+		} else {
+			clkQuery = clkQuery.Where("1 = 0")
+		}
+	}
+
+	if err := clkQuery.Find(&clockInRecords).Error; err != nil {
 		return fmt.Errorf("failed to fetch clockin records: %w", err)
 	}
 
@@ -94,11 +165,15 @@ func ProcessClockInRecords(db *gorm.DB, date time.Time) error {
 		// Map Project to JobID
 		if job, ok := jobMap[rec.Project]; ok {
 			ts.ProjectID = utils.Ptr(job.JobID)
+		} else if e, ok := empMap[empID]; ok && e.JobID != 0 {
+			ts.ProjectID = utils.Ptr(e.JobID)
 		}
 
 		// Map Wbs to CostCentreID
 		if cc, ok := ccMap[rec.Wbs]; ok {
 			ts.CostCentreID = utils.Ptr(cc.CostCentreID)
+		} else if e, ok := empMap[empID]; ok && e.CostCentreID != 0 {
+			ts.CostCentreID = utils.Ptr(e.CostCentreID)
 		}
 
 		timesheetMap[empID] = ts
@@ -154,6 +229,13 @@ func ProcessClockInRecords(db *gorm.DB, date time.Time) error {
 			Hours:        hours,
 			ReviewStatus: "",
 			Approved:     false,
+		}
+
+		if emp.JobID != 0 {
+			ts.ProjectID = utils.Ptr(emp.JobID)
+		}
+		if emp.CostCentreID != 0 {
+			ts.CostCentreID = utils.Ptr(emp.CostCentreID)
 		}
 
 		timesheetMap[emp.EmployeeID] = ts

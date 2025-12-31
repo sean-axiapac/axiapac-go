@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"axiapac.com/axiapac/core"
 	"axiapac.com/axiapac/core/models"
@@ -28,7 +27,6 @@ func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 	// r.GET("/owner-disbursments/:id/statements", endpoint.ListStatements)
 
 	// convert records to oktedi timesheets
-	r.POST("/timesheets", endpoint.ProcessClockInRecords)
 	r.POST("/timesheets/prepare", endpoint.Prepare)
 }
 
@@ -131,43 +129,6 @@ func (ep *Endpoint) Update(c *gin.Context) {
 			c.JSON(http.StatusOK, web.NewErrorResponse(fmt.Sprintf("failed to sync timesheet: %v", err)))
 			return
 		}
-	}
-
-	c.JSON(http.StatusOK, web.NewSuccessResponse(gin.H{}))
-}
-
-type ClockInRecordsProcessParamsDTO struct {
-	Date *string `json:"date,omitempty"`
-}
-
-func (ep *Endpoint) ProcessClockInRecords(c *gin.Context) {
-	// get date from body
-	var params ClockInRecordsProcessParamsDTO
-	if err := c.ShouldBindJSON(&params); err != nil {
-		c.JSON(http.StatusBadRequest, web.NewErrorResponse(web.FormatBindingError(err)))
-		return
-	}
-	// convert params.Date to time.Date
-	var date *time.Time
-	if params.Date != nil {
-		todate, err := time.Parse("2006-01-02", *params.Date)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, web.NewErrorResponse(err.Error()))
-			return
-		}
-		date = &todate
-	}
-
-	db, conn, err := ep.base.GetDB(c)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
-		return
-	}
-	defer conn.Close()
-
-	if err := oktedi.ProcessClockInRecords(db, *date); err != nil {
-		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
-		return
 	}
 
 	c.JSON(http.StatusOK, web.NewSuccessResponse(gin.H{}))

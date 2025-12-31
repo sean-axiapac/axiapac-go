@@ -299,15 +299,17 @@ func persistTimesheets(db *gorm.DB, dateStr string, timesheetMap map[int32]model
 		return fmt.Errorf("failed to fetch existing timesheets: %w", err)
 	}
 
-	existingMap := make(map[int32]int32)
+	existingMap := make(map[int32]model.OktediTimesheet)
 	for _, et := range existingTimesheets {
-		existingMap[et.EmployeeID] = et.ID
+		existingMap[et.EmployeeID] = et
 	}
 
 	var timesheets []model.OktediTimesheet
 	for _, ts := range timesheetMap {
-		if id, exists := existingMap[ts.EmployeeID]; exists {
-			ts.ID = id
+		if existing, exists := existingMap[ts.EmployeeID]; exists {
+			ts.ID = existing.ID
+			ts.TimesheetID = existing.TimesheetID
+			ts.Approved = existing.Approved // Preserve Approved status
 		}
 		timesheets = append(timesheets, ts)
 	}

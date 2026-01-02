@@ -34,6 +34,13 @@ type SearchParams struct {
 	Filters     *FilterGroup  `json:"filters"`
 }
 
+type TimesheetSearchResponse struct {
+	web.SearchResponse
+	ApprovedCount    int64 `json:"approvedCount"`
+	NotApprovedCount int64 `json:"notApprovedCount"`
+	RequiredCount    int64 `json:"requiredCount"`
+}
+
 func (ep *Endpoint) Search(c *gin.Context) {
 	var searchParams SearchParams
 
@@ -61,12 +68,17 @@ func (ep *Endpoint) Search(c *gin.Context) {
 	defer conn.Close()
 
 	// timesheets, err := GetTimesheets(db, searchParams.StartDate.Time, searchParams.EndDate.Time, searchParams.Supervisors, searchParams.Projects, searchParams.Employees)
-	timesheets, total, err := SearchTimesheets(db, searchParams, limit, offset)
+	timesheets, counts, err := SearchTimesheets(db, searchParams, limit, offset)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, web.NewSearchResponse(timesheets, total))
+	c.JSON(http.StatusOK, TimesheetSearchResponse{
+		SearchResponse:   *web.NewSearchResponse(timesheets, counts.Total),
+		ApprovedCount:    counts.Approved,
+		NotApprovedCount: counts.NotApproved,
+		RequiredCount:    counts.Required,
+	})
 }

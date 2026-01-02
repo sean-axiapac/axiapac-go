@@ -49,6 +49,10 @@ func (p *DatabaseManager) GetDB(ctx context.Context, schema string) (*gorm.DB, *
 		// Split on "/" to get DB name (last part)
 		segments := strings.Split(dsnWithoutQuery, "/")
 		schema = segments[len(segments)-1]
+	} else {
+		// splite by "." and take the first. e.g. "oktedi.axiapac.net.au" -> "oktedi"
+		parts := strings.Split(schema, ".")
+		schema = parts[0]
 	}
 
 	// Get a dedicated connection from pool

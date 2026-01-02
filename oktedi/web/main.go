@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"axiapac.com/axiapac/core"
 	clockin "axiapac.com/axiapac/oktedi/web/handlers"
@@ -241,6 +242,21 @@ func main() {
 		protected.POST("/push", clockin.WatermelonPushHandler(dm))
 
 	}
+
+	r.StaticFile("/", "./public/index.html")
+	r.Static("/assets", "./public/assets")
+	r.Static("/oktedi/assets", "./public/assets")
+
+	r.GET("/oktedi", func(c *gin.Context) {
+		c.File("./public/index.html")
+	})
+
+	r.NoRoute(func(c *gin.Context) {
+		if !strings.HasPrefix(c.Request.URL.Path, "/api") {
+			c.Redirect(http.StatusFound, "/oktedi")
+			return
+		}
+	})
 
 	r.Run("0.0.0.0:8090")
 }

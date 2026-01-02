@@ -55,8 +55,16 @@ func (dto OktediTimesheetDTO) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]OktediTimesheetDTO, int64, error) {
+type TimesheetCounts struct {
+	Total       int64
+	Approved    int64
+	NotApproved int64
+	Required    int64
+}
+
+func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]OktediTimesheetDTO, TimesheetCounts, error) {
 	var results []OktediTimesheetDTO
+	var counts TimesheetCounts
 
 	query := db.Table("oktedi_timesheets t1").
 		Select(`t1.*, 
@@ -163,10 +171,18 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 		}
 	}
 
-	// count
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
+	// Calculate counts using query clones
+	if err := query.Session(&gorm.Session{}).Count(&counts.Total).Error; err != nil {
+		return nil, counts, err
+	}
+	if err := query.Session(&gorm.Session{}).Where("t1.approved = ?", true).Count(&counts.Approved).Error; err != nil {
+		return nil, counts, err
+	}
+	if err := query.Session(&gorm.Session{}).Where("t1.approved = ?", false).Count(&counts.NotApproved).Error; err != nil {
+		return nil, counts, err
+	}
+	if err := query.Session(&gorm.Session{}).Where("t1.review_status = ?", "required").Count(&counts.Required).Error; err != nil {
+		return nil, counts, err
 	}
 
 	// Apply Sorts
@@ -190,8 +206,8 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 
 	err := query.Find(&results).Error
 	if err != nil {
-		return nil, 0, err
+		return nil, counts, err
 	}
 
-	return results, total, nil
+	return results, counts, nil
 }

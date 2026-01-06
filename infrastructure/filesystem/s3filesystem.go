@@ -37,3 +37,32 @@ func ReadFile(bucket string, key string, ctx context.Context, outStream io.Write
 
 	return nil
 }
+
+func ListFiles(bucket string, ctx context.Context) ([]string, error) {
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	client := s3.NewFromConfig(cfg)
+	var keys []string
+
+	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+	})
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list objects in bucket %s: %w", bucket, err)
+		}
+
+		for _, obj := range page.Contents {
+			if obj.Key != nil {
+				keys = append(keys, *obj.Key)
+			}
+		}
+	}
+
+	return keys, nil
+}

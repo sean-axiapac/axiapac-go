@@ -16,3 +16,5 @@ upload:
 	@echo "Uploading ./oktedi/dist/ to s3://axiapac-development/oktedi/..."
 	aws s3 sync ./oktedi/dist/ s3://axiapac-development/oktedi/ --delete
 	@echo "Upload complete!"
+
+deploy: clean build upload

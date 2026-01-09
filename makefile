@@ -1,42 +1,23 @@
-# Go parameters
-GO       ?= go
-GOOS     ?= linux
-GOARCH   ?= arm64
-BINARY   = bootstrap
-LAMBDA   = axiapac-reply-email-handler
-SRC      = ./lambdas/$(LAMBDA)
-BUILD    = ./build/$(LAMBDA)
-FUNCTION = axiapac-reply-email-handler
-ZIP      = ./build/$(LAMBDA).zip
+# 1. Identify the module (first word) and the tasks (remaining words)
+MODULE := $(firstword $(MAKECMDGOALS))
+TASKS  := $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
 
-.DEFAULT_GOAL := no-task
+# 2. Swallow the task names so root Make doesn't try to execute them as separate targets
+$(eval $(TASKS):;@:)
 
-.PHONY: oktedi no-task clean build zip upload deploy
+.PHONY: oktedi axiapac-reply-email-handler sync-calendar no-task
 
 oktedi:
-	$(MAKE) -f ./oktedi/makefile.mk $(filter-out $@,$(MAKECMDGOALS))
+	@$(MAKE) -f ./oktedi/makefile.mk $(TASKS)
+
+axiapac-reply-email-handler:
+	@$(MAKE) -f ./lambdas/axiapac-reply-email-handler/makefile.mk $(TASKS)
+
+sync-calendar:
+	@$(MAKE) -f ./lambdas/sync-calendar/makefile.mk $(TASKS)
 
 no-task:
-	@echo "❌ You must specify a task (e.g. make build, make zip, make deploy)"
+	@echo "❌ You must specify a module and a task (e.g. make oktedi build, make sync-calendar deploy)"
 	@exit 1
 
-
-deploy: clean build zip upload
-
-build:
-	@echo "Building Lambda $(LAMBDA)..."
-	GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -o $(BUILD)/$(BINARY) $(SRC)
-
-zip: build
-	@echo "Packaging Lambda $(LAMBDA)..."
-	cd $(BUILD) && zip -r9 ../$(LAMBDA).zip $(BINARY)
-
-upload: zip
-	@echo "Deploying Lambda to AWS: $(FUNCTION)"
-	aws lambda update-function-code \
-		--function-name $(FUNCTION) \
-		--zip-file fileb://$(ZIP)
-
-clean:
-	@echo "Cleaning build artifacts..."
-	rm -rf build
+.DEFAULT_GOAL := no-task

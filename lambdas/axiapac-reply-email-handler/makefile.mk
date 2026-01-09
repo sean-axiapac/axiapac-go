@@ -1,19 +1,18 @@
-FUNCTION = sync-calendar
+FUNCTION = axiapac-reply-email-handler
 DIR      = ./lambdas/$(FUNCTION)
 DIST     = $(DIR)/dist
-OUTPUT   = $(DIST)/bootstrap
+OUTPUT    = $(DIST)/bootstrap
 ZIP      = $(OUTPUT).zip
 
 .DEFAULT_GOAL := no-task
 
-.PHONY: no-task clean build zip upload deploy run
+.PHONY: no-task clean build zip upload deploy
 
 no-task:
-	@echo "❌ You must specify a task (e.g. make build, make zip, make deploy, make run)"
+	@echo "❌ You must specify a task (e.g. make build, make zip, make deploy)"
 	@exit 1
 
-run:
-	go run $(DIR)
+deploy: clean build zip upload
 
 build:
 	@echo "Building Lambda $(FUNCTION)..."
@@ -29,8 +28,6 @@ upload: zip
 	aws lambda update-function-code \
 		--function-name $(FUNCTION) \
 		--zip-file fileb://$(ZIP)
-
-deploy: clean build zip upload
 
 clean:
 	@echo "Cleaning build artifacts..."

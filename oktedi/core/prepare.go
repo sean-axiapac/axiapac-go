@@ -33,7 +33,7 @@ type ReferenceData struct {
 	EmpMap    map[int32]models.Employee
 	TagMap    map[string]models.Employee
 	JobMap    map[string]models.Job
-	CCMap     map[string]models.CostCentre
+	JobCCMap  map[int32]map[string]models.CostCentre
 }
 
 func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareOptions) error {
@@ -97,13 +97,30 @@ func fetchReferenceData(db *gorm.DB) (*ReferenceData, error) {
 		jobMap[j.JobNo] = j
 	}
 
-	var costCentres []models.CostCentre
-	if err := db.Find(&costCentres).Error; err != nil {
+	var allCC []models.CostCentre
+	if err := db.Find(&allCC).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch cost centres: %w", err)
 	}
-	ccMap := make(map[string]models.CostCentre)
-	for _, cc := range costCentres {
-		ccMap[cc.Code] = cc
+	ccByID := make(map[int32]models.CostCentre)
+	for _, cc := range allCC {
+		ccByID[cc.CostCentreID] = cc
+	}
+
+	var jobCCs []models.JobCostCentre
+	if err := db.Find(&jobCCs).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch job cost centres: %w", err)
+	}
+
+	jobCCMap := make(map[int32]map[string]models.CostCentre)
+	for _, jcc := range jobCCs {
+		cc, ok := ccByID[jcc.CostCentreID]
+		if !ok {
+			continue
+		}
+		if _, ok := jobCCMap[jcc.JobID]; !ok {
+			jobCCMap[jcc.JobID] = make(map[string]models.CostCentre)
+		}
+		jobCCMap[jcc.JobID][cc.Code] = cc
 	}
 
 	return &ReferenceData{
@@ -111,7 +128,7 @@ func fetchReferenceData(db *gorm.DB) (*ReferenceData, error) {
 		EmpMap:    empMap,
 		TagMap:    tagMap,
 		JobMap:    jobMap,
-		CCMap:     ccMap,
+		JobCCMap:  jobCCMap,
 	}, nil
 }
 
@@ -270,8 +287,12 @@ func applySupervisorRecords(date time.Time, supervisorRecords []model.Supervisor
 		}
 
 		if rec.Wbs != "" {
-			if cc, ok := refData.CCMap[rec.Wbs]; ok {
-				ts.CostCentreID = utils.Ptr(cc.CostCentreID)
+			if ts.ProjectID != nil {
+				if jobCCs, ok := refData.JobCCMap[*ts.ProjectID]; ok {
+					if cc, ok := jobCCs[rec.Wbs]; ok {
+						ts.CostCentreID = utils.Ptr(cc.CostCentreID)
+					}
+				}
 			}
 		} else if !exists {
 			if e, ok := refData.EmpMap[empID]; ok && e.CostCentreID != 0 {

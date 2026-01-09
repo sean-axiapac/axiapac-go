@@ -54,8 +54,8 @@ func (this *TimesheetEndpoint) Search(take int) (map[string]interface{}, error) 
 	return result, nil
 }
 
-func (this *TimesheetEndpoint) Save(dto *TimesheetDTO) (*common.StatusAPIResponse[*TimesheetDTO], error) {
-	resp, err := this.transport.Post(fmt.Sprintf("/api/v1/timesheets/%d", dto.ID), dto, nil)
+func (this *TimesheetEndpoint) Save(dto *TimesheetDTO, applyRules bool) (*common.StatusAPIResponse[*TimesheetDTO], error) {
+	resp, err := this.transport.Post(fmt.Sprintf("/api/v1/timesheets/%d?applyRules=%t", dto.ID, applyRules), dto, nil)
 	if err != nil {
 		return nil, err
 	}

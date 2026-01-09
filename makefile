@@ -9,11 +9,17 @@ BUILD    = ./build/$(LAMBDA)
 FUNCTION = axiapac-reply-email-handler
 ZIP      = ./build/$(LAMBDA).zip
 
-.PHONY: on-task clean build zip upload deploy
+.DEFAULT_GOAL := no-task
+
+.PHONY: oktedi no-task clean build zip upload deploy
+
+oktedi:
+	$(MAKE) -f ./oktedi/makefile.mk $(filter-out $@,$(MAKECMDGOALS))
 
 no-task:
 	@echo "❌ You must specify a task (e.g. make build, make zip, make deploy)"
 	@exit 1
+
 
 deploy: clean build zip upload
 

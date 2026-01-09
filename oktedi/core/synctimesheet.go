@@ -154,7 +154,7 @@ func SyncOktediTimesheet(db *gorm.DB, client *v1.AxiapacClient, source *model.Ok
 	}
 
 	// 4. Save to Axiapac
-	res, err := client.Timesheets.Save(dto)
+	res, err := client.Timesheets.Save(dto, true)
 	if err != nil {
 		return err
 	}

@@ -71,7 +71,7 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
             e.EmployeeId as employee_id, e.Code as employee_code, e.FirstName as employee_first_name, e.Surname as employee_surname, e.JobID as employee_job_id, e.CostCentreID as employee_cost_centre_id,
             ej.JobId as employee_job_id, ej.JobNo as employee_job_job_no, ej.Description as employee_job_description,
             ecc.CostCentreId as employee_cost_centre_id, ecc.Code as employee_cost_centre_code, ecc.Description as employee_cost_centre_description,
-            j.JobId as job_id, j.JobNo as job_job_no, j.Description as job_description,
+            j.JobId as project_id, j.JobNo as project_job_no, j.Description as project_description,
             cc.CostCentreId as cost_centre_id, cc.Code as cost_centre_code, cc.Description as cost_centre_description`).
 		Joins("JOIN employees e ON e.employeeid = t1.employee_id").
 		Joins("LEFT JOIN jobs ej ON ej.jobid = e.jobid").

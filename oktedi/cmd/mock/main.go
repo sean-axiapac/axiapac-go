@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
 	"axiapac.com/axiapac/core/models"
@@ -23,8 +24,8 @@ func main() {
 		log.Fatalf("failed to connect database: %v", err)
 	}
 
-	startDate := time.Date(2025, 12, 22, 0, 0, 0, 0, time.UTC)
-	endDate := time.Date(2025, 12, 28, 0, 0, 0, 0, time.UTC)
+	startDate := time.Date(2026, 01, 20, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, 01, 20, 0, 0, 0, 0, time.UTC)
 
 	// mockOktediTimesheets(db, startDate, endDate)
 	mockClockinRecords(db, startDate, endDate)
@@ -46,6 +47,8 @@ func mockOktediTimesheets(db *gorm.DB, startDate, endDate time.Time) {
 				EmployeeID:   emp.EmployeeID,
 				Date:         d,
 				Hours:        8.0,
+				StartTime:    d.Add(8 * time.Hour),
+				FinishTime:   d.Add(16 * time.Hour),
 				ReviewStatus: "",
 				Approved:     false,
 			}
@@ -95,21 +98,27 @@ func mockClockinRecords(db *gorm.DB, startDate, endDate time.Time) {
 
 			// Clock In
 			records = append(records, model.ClockinRecord{
-				ID:            uuid.New().String(),
-				Tag:           emp.IdentificationTag,
-				Date:          dateStr,
-				Kind:          "in",
-				Timestamp:     d.Add(8 * time.Hour).Format(time.RFC3339),
+				ID:   uuid.New().String(),
+				Tag:  emp.IdentificationTag,
+				Date: dateStr,
+				Kind: "in",
+				Timestamp: d.Add([]time.Duration{
+					8*time.Hour + 30*time.Minute,
+					8*time.Hour + 35*time.Minute,
+					8*time.Hour + 20*time.Minute}[rand.Intn(3)]).Format(time.RFC3339),
 				ProcessStatus: "pending",
 			})
 
 			// Clock Out
 			records = append(records, model.ClockinRecord{
-				ID:            uuid.New().String(),
-				Tag:           emp.IdentificationTag,
-				Date:          dateStr,
-				Kind:          "out",
-				Timestamp:     d.Add(16 * time.Hour).Format(time.RFC3339),
+				ID:   uuid.New().String(),
+				Tag:  emp.IdentificationTag,
+				Date: dateStr,
+				Kind: "out",
+				Timestamp: d.Add([]time.Duration{
+					16*time.Hour + 30*time.Minute,
+					16*time.Hour + 35*time.Minute,
+					16*time.Hour + 20*time.Minute}[rand.Intn(3)]).Format(time.RFC3339),
 				ProcessStatus: "pending",
 			})
 		}

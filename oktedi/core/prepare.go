@@ -29,11 +29,13 @@ func Prepare(db *gorm.DB, opts PrepareOptions) error {
 }
 
 type ReferenceData struct {
-	Employees []models.Employee
-	EmpMap    map[int32]models.Employee
-	TagMap    map[string]models.Employee
-	JobMap    map[string]models.Job
-	JobCCMap  map[int32]map[string]models.CostCentre
+	Employees       []models.Employee
+	EmpMap          map[int32]models.Employee
+	TagMap          map[string]models.Employee
+	JobMap          map[string]models.Job
+	JobCCMap        map[int32]map[string]models.CostCentre
+	EmpWorkHours    map[int32]map[int32]models.EmployeeWorkHour
+	RegionWorkHours map[int32]map[int32]models.RegionWorkHour
 }
 
 func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareOptions) error {
@@ -56,10 +58,13 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 	timesheetMap := make(map[int32]model.OktediTimesheet)
 
 	// Track ClockIn IDs for status updates
-	processedClockInIDs, errorClockInIDs := processClockInRecords(date, clockInRecords, refData.TagMap, timesheetMap)
+	processedClockInIDs, errorClockInIDs := processClockInRecords(date, clockInRecords, refData, timesheetMap)
 
 	// Apply Supervisor Records (Overwrites)
 	applySupervisorRecords(date, supervisorRecords, timesheetMap, refData)
+
+	// 3.5 Adjust final timesheets (Snapping and Break Deduction)
+	adjustFinalTimesheets(timesheetMap, refData)
 
 	// 4. Persist to DB
 	if err := persistTimesheets(db, dateStr, timesheetMap); err != nil {
@@ -123,12 +128,40 @@ func fetchReferenceData(db *gorm.DB) (*ReferenceData, error) {
 		jobCCMap[jcc.JobID][cc.Code] = cc
 	}
 
+	// Fetch Employee Work Hours
+	var empWorkHours []models.EmployeeWorkHour
+	if err := db.Find(&empWorkHours).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch employee work hours: %w", err)
+	}
+	empWHMap := make(map[int32]map[int32]models.EmployeeWorkHour)
+	for _, wh := range empWorkHours {
+		if _, ok := empWHMap[wh.EmployeeID]; !ok {
+			empWHMap[wh.EmployeeID] = make(map[int32]models.EmployeeWorkHour)
+		}
+		empWHMap[wh.EmployeeID][wh.DayOfWeek] = wh
+	}
+
+	// Fetch Region Work Hours
+	var regionWorkHours []models.RegionWorkHour
+	if err := db.Find(&regionWorkHours).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch region work hours: %w", err)
+	}
+	regionWHMap := make(map[int32]map[int32]models.RegionWorkHour)
+	for _, wh := range regionWorkHours {
+		if _, ok := regionWHMap[wh.CalendarRegionID]; !ok {
+			regionWHMap[wh.CalendarRegionID] = make(map[int32]models.RegionWorkHour)
+		}
+		regionWHMap[wh.CalendarRegionID][wh.DayOfWeek] = wh
+	}
+
 	return &ReferenceData{
-		Employees: employees,
-		EmpMap:    empMap,
-		TagMap:    tagMap,
-		JobMap:    jobMap,
-		JobCCMap:  jobCCMap,
+		Employees:       employees,
+		EmpMap:          empMap,
+		TagMap:          tagMap,
+		JobMap:          jobMap,
+		JobCCMap:        jobCCMap,
+		EmpWorkHours:    empWHMap,
+		RegionWorkHours: regionWHMap,
 	}, nil
 }
 
@@ -193,7 +226,7 @@ func fetchRecords(db *gorm.DB, dateStr string, opts PrepareOptions, employees []
 	return supervisorRecords, clockInRecords, nil
 }
 
-func processClockInRecords(date time.Time, clockInRecords []*model.ClockinRecord, tagMap map[string]models.Employee, timesheetMap map[int32]model.OktediTimesheet) ([]string, []string) {
+func processClockInRecords(date time.Time, clockInRecords []*model.ClockinRecord, refData *ReferenceData, timesheetMap map[int32]model.OktediTimesheet) ([]string, []string) {
 	var processedIDs []string
 	var errorIDs []string
 
@@ -204,7 +237,7 @@ func processClockInRecords(date time.Time, clockInRecords []*model.ClockinRecord
 			groupIDs[i] = r.ID
 		}
 
-		emp, ok := tagMap[g.Tag]
+		emp, ok := refData.TagMap[g.Tag]
 		if !ok {
 			fmt.Printf("Warning: No employee found for tag %s\n", g.Tag)
 			errorIDs = append(errorIDs, groupIDs...)
@@ -229,12 +262,12 @@ func processClockInRecords(date time.Time, clockInRecords []*model.ClockinRecord
 			continue
 		}
 
-		hours := endTime.Sub(*startTime).Hours()
-
 		ts := model.OktediTimesheet{
 			EmployeeID:   emp.EmployeeID,
 			Date:         date,
-			Hours:        hours,
+			Hours:        endTime.Sub(*startTime).Hours(),
+			StartTime:    *startTime,
+			FinishTime:   *endTime,
 			ReviewStatus: "",
 			Approved:     false,
 		}
@@ -274,6 +307,27 @@ func applySupervisorRecords(date time.Time, supervisorRecords []model.Supervisor
 		if rec.Clockin != nil && rec.Clockout != nil {
 			duration := rec.Clockout.Sub(*rec.Clockin)
 			ts.Hours = duration.Hours()
+			ts.StartTime = *rec.Clockin
+			ts.FinishTime = *rec.Clockout
+		} else if !exists {
+			// If creating new timesheet from supervisor record, use defined hours if available
+			if def, found := GetDefinedWorkHours(date, refData.EmpMap[empID], refData.EmpWorkHours, refData.RegionWorkHours); found {
+				// Use helper from timesheet_rules.go to parse
+				// Since parseTimeOnDate is not exported, I'll implement a local helper or use AdjustTimesheetHours with zero actuals?
+				// Actually, I'll just use a local parse helper for now to avoid side effects in timesheet_rules.go
+				if start, err := ParseTimeOnDate(date, def.Start); err == nil {
+					ts.StartTime = start
+				}
+				if finish, err := ParseTimeOnDate(date, def.Finish); err == nil {
+					ts.FinishTime = finish
+					if ts.FinishTime.Before(ts.StartTime) {
+						ts.FinishTime = ts.FinishTime.Add(24 * time.Hour)
+					}
+				}
+				if !ts.StartTime.IsZero() && !ts.FinishTime.IsZero() {
+					ts.Hours = ts.FinishTime.Sub(ts.StartTime).Hours()
+				}
+			}
 		}
 
 		if rec.Project != "" {
@@ -353,5 +407,41 @@ func updateProcessStatuses(db *gorm.DB, processedIDs, skippedIDs, errorIDs []str
 	}
 	if len(errorIDs) > 0 {
 		db.Model(&model.ClockinRecord{}).Where("id IN ?", errorIDs).Update("process_status", "error")
+	}
+}
+
+func adjustFinalTimesheets(timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
+	for empID, ts := range timesheetMap {
+		emp, ok := refData.EmpMap[empID]
+		if !ok {
+			continue
+		}
+
+		// 1. Apply snapping rules (15m early / 10m late etc)
+		adjusted, err := AdjustTimesheetHours(ts.StartTime, ts.FinishTime, emp, refData.EmpWorkHours, refData.RegionWorkHours)
+		if err != nil {
+			fmt.Printf("Warning: Failed to adjust times for employee %d: %v\n", empID, err)
+			// Continue with unadjusted times if error
+		} else {
+			ts.StartTime = adjusted.StartTime
+			ts.FinishTime = adjusted.FinishTime
+		}
+
+		// 2. Calculate hours
+		duration := ts.FinishTime.Sub(ts.StartTime)
+		hours := duration.Hours()
+
+		// 3. Deduct break if defined
+		def, found := GetDefinedWorkHours(ts.StartTime, emp, refData.EmpWorkHours, refData.RegionWorkHours)
+		if found && def.Break > 0 {
+			hours -= float64(def.Break) / 60.0
+		}
+
+		if hours < 0 {
+			hours = 0
+		}
+
+		ts.Hours = hours
+		timesheetMap[empID] = ts
 	}
 }

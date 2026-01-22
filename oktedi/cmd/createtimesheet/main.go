@@ -155,9 +155,16 @@ func ConvertTimesheet(
 		PayrollTimeType: &common.IdCodeDTO{Code: "ORD"},
 	}
 
-	// Default start time to 08:00
+	// Default start time to 08:00 if not set
 	start := time.Date(date.Year(), date.Month(), date.Day(), 8, 0, 0, 0, tz)
+	if !source.StartTime.IsZero() {
+		start = source.StartTime
+	}
+
 	finish := start.Add(time.Duration(hours * float64(time.Hour)))
+	if !source.FinishTime.IsZero() {
+		finish = source.FinishTime
+	}
 
 	item.StartTime = utils.Ptr(start.Format("15:04"))
 	item.FinishTime = utils.Ptr(finish.Format("15:04"))
@@ -257,7 +264,7 @@ func ProcessTimesheets(db *gorm.DB, client *v1.AxiapacClient, sources []model.Ok
 			ts.Employee.Code, ts.Date, ts.PaidHours)
 
 		// save timesheet
-		res, err := client.Timesheets.Save(ts)
+		res, err := client.Timesheets.Save(ts, true)
 		if err != nil {
 			fmt.Printf("[ERROR] request failed: %v\n", err)
 			failed++

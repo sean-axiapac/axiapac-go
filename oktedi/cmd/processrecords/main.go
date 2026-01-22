@@ -120,15 +120,20 @@ func Run(db *gorm.DB, date time.Time) error {
 		empID := int32(rec.EmployeeId)
 
 		var hours float64
+		var startTime, finishTime time.Time
 		if rec.Clockin != nil && rec.Clockout != nil {
 			duration := rec.Clockout.Sub(*rec.Clockin)
 			hours = duration.Hours()
+			startTime = *rec.Clockin
+			finishTime = *rec.Clockout
 		}
 
 		ts := model.OktediTimesheet{
 			EmployeeID:   empID,
 			Date:         date,
 			Hours:        hours,
+			StartTime:    startTime,
+			FinishTime:   finishTime,
 			ReviewStatus: "",
 			Approved:     true, // Assuming supervisor records are approved
 		}
@@ -194,6 +199,8 @@ func Run(db *gorm.DB, date time.Time) error {
 			EmployeeID:   emp.EmployeeID,
 			Date:         date,
 			Hours:        hours,
+			StartTime:    *startTime,
+			FinishTime:   *endTime,
 			ReviewStatus: "",
 			Approved:     false,
 		}

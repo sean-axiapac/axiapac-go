@@ -19,6 +19,8 @@ type OktediTimesheet struct {
 	ID           int32     `gorm:"primaryKey;column:id"`
 	Date         time.Time `gorm:"column:date;type:date"`
 	Hours        float64   `gorm:"column:hours;type:decimal(10,2)"`
+	StartTime    time.Time `gorm:"column:start_time;type:datetime"`
+	FinishTime   time.Time `gorm:"column:finish_time;type:datetime"`
 	ReviewStatus string    `gorm:"column:review_status;type:varchar(50)"`
 	Approved     bool      `gorm:"column:approved;type:bool;not null"`
 

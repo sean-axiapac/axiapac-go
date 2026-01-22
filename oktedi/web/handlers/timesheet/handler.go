@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"axiapac.com/axiapac/core"
 	"axiapac.com/axiapac/core/models"
@@ -31,9 +32,11 @@ func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 }
 
 type OktediTimesheetUpdateDTO struct {
-	Hours        *float64 `json:"hours,omitempty"`
-	ReviewStatus *string  `json:"reviewStatus,omitempty"`
-	Approved     *bool    `json:"approved,omitempty"`
+	Hours        *float64   `json:"hours,omitempty"`
+	StartTime    *time.Time `json:"startTime,omitempty"`
+	FinishTime   *time.Time `json:"finishTime,omitempty"`
+	ReviewStatus *string    `json:"reviewStatus,omitempty"`
+	Approved     *bool      `json:"approved,omitempty"`
 }
 
 func (ep *Endpoint) Update(c *gin.Context) {

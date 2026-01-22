@@ -89,9 +89,16 @@ func SyncOktediTimesheet(db *gorm.DB, client *v1.AxiapacClient, source *model.Ok
 		LabourRate:      &common.IdCodeDTO{Code: labourRate.Code},
 	}
 
-	// Default start time to 08:00
+	// Default start time to 08:00 if not set
 	start := time.Date(date.Year(), date.Month(), date.Day(), 8, 0, 0, 0, tz)
+	if !source.StartTime.IsZero() {
+		start = source.StartTime
+	}
+
 	finish := start.Add(time.Duration(hours * float64(time.Hour)))
+	if !source.FinishTime.IsZero() {
+		finish = source.FinishTime
+	}
 
 	item.StartTime = utils.Ptr(start.Format("15:04"))
 	item.FinishTime = utils.Ptr(finish.Format("15:04"))

@@ -187,6 +187,9 @@ func Run(db *gorm.DB, date time.Time) error {
 		startTime, err1 := utils.ParseISOTime(startStr)
 		endTime, err2 := utils.ParseISOTime(endStr)
 
+		startTime = utils.UtcTo10(startTime)
+		endTime = utils.UtcTo10(endTime)
+
 		if err1 != nil || err2 != nil {
 			fmt.Printf("Warning: Failed to parse time for %s: %v, %v\n", g.Tag, err1, err2)
 			errorClockInIDs = append(errorClockInIDs, groupIDs...)

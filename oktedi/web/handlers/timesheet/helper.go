@@ -36,22 +36,54 @@ type OktediTimesheetDTO struct {
 	ID           int32         `json:"id"`
 	Date         time.Time     `json:"date"`
 	Hours        float64       `json:"hours"`
-	ReviewStatus string        `json:"reviewStatus"`
-	Approved     bool          `json:"approved"`
+	StartTime    time.Time     `json:"startTime" gorm:"column:start_time"`
+	FinishTime   time.Time     `json:"finishTime" gorm:"column:finish_time"`
+	ReviewStatus string        `json:"reviewStatus" gorm:"column:review_status"`
+	Approved     bool          `json:"approved" gorm:"column:approved"`
 	Employee     EmployeeDTO   `json:"employee" gorm:"embedded;embeddedPrefix:employee_"`
 	Job          JobDTO        `json:"project" gorm:"embedded;embeddedPrefix:project_"`
 	CostCentre   CostCentreDTO `json:"costCentre" gorm:"embedded;embeddedPrefix:cost_centre_"`
 	TimesheetID  *int32        `json:"timesheetId"`
 }
 
+type ClockinRecordDTO struct {
+	ID        string `json:"id"`
+	Tag       string `json:"tag"`
+	Date      string `json:"date"`
+	Kind      string `json:"kind"`
+	Timestamp string `json:"timestamp"`
+	DeviceID  string `json:"deviceId"`
+}
+
+type SupervisorRecordDTO struct {
+	ID           int32      `json:"id"`
+	SupervisorID int        `json:"supervisorId"`
+	Project      string     `json:"project"`
+	Wbs          string     `json:"wbs"`
+	Date         string     `json:"date"`
+	Clockin      *time.Time `json:"clockin"`
+	Clockout     *time.Time `json:"clockout"`
+	DeviceID     string     `json:"deviceId"`
+}
+
+type OktediTimesheetDetailDTO struct {
+	OktediTimesheet   OktediTimesheetDTO    `json:"timesheet"`
+	ClockinRecords    []ClockinRecordDTO    `json:"clockinRecords"`
+	SupervisorRecords []SupervisorRecordDTO `json:"supervisorRecords"`
+}
+
 func (dto OktediTimesheetDTO) MarshalJSON() ([]byte, error) {
 	type Alias OktediTimesheetDTO
 	return json.Marshal(&struct {
-		Date string `json:"date"`
+		Date       string `json:"date"`
+		StartTime  string `json:"startTime"`
+		FinishTime string `json:"finishTime"`
 		*Alias
 	}{
-		Date:  dto.Date.Format("2006-01-02"),
-		Alias: (*Alias)(&dto),
+		Date:       dto.Date.Format("2006-01-02"),
+		StartTime:  dto.StartTime.Format("2006-01-02T15:04:05"),
+		FinishTime: dto.FinishTime.Format("2006-01-02T15:04:05"),
+		Alias:      (*Alias)(&dto),
 	})
 }
 

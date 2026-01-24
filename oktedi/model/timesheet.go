@@ -30,10 +30,10 @@ type OktediTimesheet struct {
 	ProjectID    *int32 `gorm:"column:project_id;null"`
 	CostCentreID *int32 `gorm:"column:cost_centre_id;null"`
 
-	Timesheet  models.Timesheet     `gorm:"foreignKey:TimesheetID;references:TimesheetId"`
-	Employee   models.Employee      `gorm:"foreignKey:EmployeeID;references:EmployeeId"`
-	Project    models.Job           `gorm:"foreignKey:ProjectID;references:JobID"`
-	CostCentre models.JobCostCentre `gorm:"foreignKey:CostCentreId;references:CostCentreID"`
+	Timesheet  models.Timesheet  `gorm:"foreignKey:TimesheetID;references:TimesheetId"`
+	Employee   models.Employee   `gorm:"foreignKey:EmployeeID;references:EmployeeId"`
+	Project    models.Job        `gorm:"foreignKey:ProjectID;references:JobID"`
+	CostCentre models.CostCentre `gorm:"foreignKey:CostCentreID;references:CostCentreID"`
 }
 
 func (OktediTimesheet) TableName() string {

@@ -23,6 +23,7 @@ type Endpoint struct {
 func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 	endpoint := &Endpoint{base: common.Handler{Dm: dm}}
 	r.POST("/timesheets/search", endpoint.Search)
+	r.GET("/timesheets/:id", endpoint.Get)
 	r.PUT("/timesheets/:id", endpoint.Update)
 	// r.GET("/owner-disbursments/:id", endpoint.Find)
 	// r.GET("/owner-disbursments/:id/statements", endpoint.ListStatements)

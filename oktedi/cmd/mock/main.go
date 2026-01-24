@@ -105,7 +105,9 @@ func mockClockinRecords(db *gorm.DB, startDate, endDate time.Time) {
 				Timestamp: d.Add([]time.Duration{
 					8*time.Hour + 30*time.Minute,
 					8*time.Hour + 35*time.Minute,
-					8*time.Hour + 20*time.Minute}[rand.Intn(3)]).Format(time.RFC3339),
+					8*time.Hour + 20*time.Minute}[rand.Intn(3)]).
+					Add(-10 * time.Hour). // from +10 to UTC
+					Format(time.RFC3339),
 				ProcessStatus: "pending",
 			})
 
@@ -118,7 +120,9 @@ func mockClockinRecords(db *gorm.DB, startDate, endDate time.Time) {
 				Timestamp: d.Add([]time.Duration{
 					16*time.Hour + 30*time.Minute,
 					16*time.Hour + 35*time.Minute,
-					16*time.Hour + 20*time.Minute}[rand.Intn(3)]).Format(time.RFC3339),
+					16*time.Hour + 20*time.Minute}[rand.Intn(3)]).
+					Add(-10 * time.Hour). // from +10 to UTC
+					Format(time.RFC3339),
 				ProcessStatus: "pending",
 			})
 		}

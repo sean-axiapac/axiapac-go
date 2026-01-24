@@ -8,8 +8,7 @@ import (
 var BrisbaneTZ = time.FixedZone("UTC+10", 10*60*60)
 
 func BrisbaneNow() time.Time {
-	loc := time.FixedZone("AEST", 10*60*60) // Fallback to AEST if timezone load fails
-	return time.Now().In(loc)
+	return time.Now().In(BrisbaneTZ)
 }
 
 func MustParseDate(dateStr string) time.Time {
@@ -47,4 +46,20 @@ func ParseISOTime(s string) (*time.Time, error) {
 	}
 
 	return nil, fmt.Errorf("failed to parse time: %v", s)
+}
+
+func AdjustUtcToBrisbaneHours(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	res := t.Add(10 * time.Hour)
+	return &res
+}
+
+func UtcTo10(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	res := t.In(BrisbaneTZ)
+	return &res
 }

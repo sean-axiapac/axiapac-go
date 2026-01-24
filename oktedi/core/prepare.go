@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -65,6 +66,9 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 
 	// 3.5 Adjust final timesheets (Snapping and Break Deduction)
 	adjustFinalTimesheets(timesheetMap, refData)
+
+	// 3.6 Update review status based on normal hours matching
+	updateReviewStatus(timesheetMap, refData)
 
 	// 4. Persist to DB
 	if err := persistTimesheets(db, dateStr, timesheetMap); err != nil {
@@ -256,6 +260,9 @@ func processClockInRecords(date time.Time, clockInRecords []*model.ClockinRecord
 		startTime, err1 := utils.ParseISOTime(startStr)
 		endTime, err2 := utils.ParseISOTime(endStr)
 
+		startTime = utils.AdjustUtcToBrisbaneHours(startTime)
+		endTime = utils.AdjustUtcToBrisbaneHours(endTime)
+
 		if err1 != nil || err2 != nil {
 			fmt.Printf("Warning: Failed to parse time for %s: %v, %v\n", g.Tag, err1, err2)
 			errorIDs = append(errorIDs, groupIDs...)
@@ -442,6 +449,50 @@ func adjustFinalTimesheets(timesheetMap map[int32]model.OktediTimesheet, refData
 		}
 
 		ts.Hours = hours
+		timesheetMap[empID] = ts
+	}
+}
+
+func updateReviewStatus(timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
+	for empID, ts := range timesheetMap {
+		emp, ok := refData.EmpMap[empID]
+		if !ok {
+			continue
+		}
+
+		def, found := GetDefinedWorkHours(ts.StartTime, emp, refData.EmpWorkHours, refData.RegionWorkHours)
+		if !found {
+			ts.ReviewStatus = "required"
+			timesheetMap[empID] = ts
+			continue
+		}
+
+		dateBase := time.Date(ts.StartTime.Year(), ts.StartTime.Month(), ts.StartTime.Day(), 0, 0, 0, 0, ts.StartTime.Location())
+		defStart, err1 := ParseTimeOnDate(dateBase, def.Start)
+		defFinish, err2 := ParseTimeOnDate(dateBase, def.Finish)
+
+		if err1 != nil || err2 != nil {
+			ts.ReviewStatus = "required"
+			timesheetMap[empID] = ts
+			continue
+		}
+
+		if defFinish.Before(defStart) {
+			defFinish = defFinish.Add(24 * time.Hour)
+		}
+
+		expectedHours := defFinish.Sub(defStart).Hours() - float64(def.Break)/60.0
+		if expectedHours < 0 {
+			expectedHours = 0
+		}
+
+		// Use a small epsilon for float comparison to avoid precision issues
+		if math.Abs(ts.Hours-expectedHours) > 0.001 {
+			ts.ReviewStatus = "required"
+		} else {
+			ts.ReviewStatus = ""
+		}
+
 		timesheetMap[empID] = ts
 	}
 }

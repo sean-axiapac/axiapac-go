@@ -183,3 +183,54 @@ func TestAdjustTimesheetHours(t *testing.T) {
 		assert.Equal(t, actualFinish, res.FinishTime)
 	})
 }
+
+func TestGetBreakMinutes(t *testing.T) {
+	empID := int32(100)
+	regionID := int32(5)
+	var breakVal int32 = 30
+
+	// Employee using User hours
+	empUser := models.Employee{
+		EmployeeID:           empID,
+		UseCalendarWorkHours: false,
+	}
+
+	// Employee using Region hours
+	empRegion := models.Employee{
+		EmployeeID:           empID,
+		UseCalendarWorkHours: true,
+		CalendarRegionID:     regionID,
+	}
+
+	empHours := map[int32]map[int32]models.EmployeeWorkHour{
+		empID: {
+			1: {Start: "08:00", Finish: "16:00", Break: breakVal},
+		},
+	}
+
+	regionHours := map[int32]map[int32]models.RegionWorkHour{
+		regionID: {
+			1: {Start: "09:00", Finish: "17:00", Break: breakVal},
+		},
+	}
+
+	dateMonday := time.Date(2023, 10, 23, 0, 0, 0, 0, time.UTC) // Monday
+	dateSunday := time.Date(2023, 10, 22, 0, 0, 0, 0, time.UTC) // Sunday (no hours)
+
+	t.Run("User Hours - Defined Break", func(t *testing.T) {
+		res := GetBreakMinutes(dateMonday, empUser, empHours, regionHours)
+		assert.NotNil(t, res)
+		assert.Equal(t, breakVal, *res)
+	})
+
+	t.Run("Region Hours - Defined Break", func(t *testing.T) {
+		res := GetBreakMinutes(dateMonday, empRegion, empHours, regionHours)
+		assert.NotNil(t, res)
+		assert.Equal(t, breakVal, *res)
+	})
+
+	t.Run("No Hours defined", func(t *testing.T) {
+		res := GetBreakMinutes(dateSunday, empUser, empHours, regionHours)
+		assert.Nil(t, res)
+	})
+}

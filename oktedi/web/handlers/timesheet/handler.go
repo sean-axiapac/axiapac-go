@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"axiapac.com/axiapac/core"
 	"axiapac.com/axiapac/core/models"
@@ -33,11 +32,12 @@ func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 }
 
 type OktediTimesheetUpdateDTO struct {
-	Hours        *float64   `json:"hours,omitempty"`
-	StartTime    *time.Time `json:"startTime,omitempty"`
-	FinishTime   *time.Time `json:"finishTime,omitempty"`
-	ReviewStatus *string    `json:"reviewStatus,omitempty"`
-	Approved     *bool      `json:"approved,omitempty"`
+	Hours        *float64           `json:"hours,omitempty"`
+	StartTime    *web.LocalDateTime `json:"startTime,omitempty"`
+	FinishTime   *web.LocalDateTime `json:"finishTime,omitempty"`
+	ReviewStatus *string            `json:"reviewStatus,omitempty"`
+	Approved     *bool              `json:"approved,omitempty"`
+	Break        *int32             `json:"break,omitempty"`
 }
 
 func (ep *Endpoint) Update(c *gin.Context) {
@@ -69,8 +69,29 @@ func (ep *Endpoint) Update(c *gin.Context) {
 		return
 	}
 
+	// Convert DTO to map for GORM to handle custom LocalDateTime correctly
+	updates := make(map[string]interface{})
+	if updateDTO.Hours != nil {
+		updates["hours"] = *updateDTO.Hours
+	}
+	if updateDTO.StartTime != nil {
+		updates["start_time"] = updateDTO.StartTime.Time
+	}
+	if updateDTO.FinishTime != nil {
+		updates["finish_time"] = updateDTO.FinishTime.Time
+	}
+	if updateDTO.ReviewStatus != nil {
+		updates["review_status"] = *updateDTO.ReviewStatus
+	}
+	if updateDTO.Approved != nil {
+		updates["approved"] = *updateDTO.Approved
+	}
+	if updateDTO.Break != nil {
+		updates["break"] = *updateDTO.Break
+	}
+
 	// Update the timesheet in the database
-	if err := db.Model(&model.OktediTimesheet{}).Where("id = ?", id).Updates(updateDTO).Error; err != nil {
+	if err := db.Model(&model.OktediTimesheet{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
 		return
 	}
@@ -123,7 +144,8 @@ func (ep *Endpoint) Update(c *gin.Context) {
 			return
 		}
 
-		client, err := oktedi.CreateClient(&user)
+		hostname := common.GetHostname(c.Request.Host)
+		client, err := oktedi.CreateClient(&user, hostname)
 		if err != nil {
 			c.JSON(http.StatusOK, web.NewErrorResponse(fmt.Sprintf("failed to create asiapac client: %v", err)))
 			return

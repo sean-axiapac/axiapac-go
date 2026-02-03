@@ -40,6 +40,8 @@ type OktediTimesheetDTO struct {
 	FinishTime   time.Time     `json:"finishTime" gorm:"column:finish_time"`
 	ReviewStatus string        `json:"reviewStatus" gorm:"column:review_status"`
 	Approved     bool          `json:"approved" gorm:"column:approved"`
+	Break        *int32        `json:"break" gorm:"column:break"`
+	TotalHours   float64       `json:"totalHours" gorm:"column:total_hours"`
 	Employee     EmployeeDTO   `json:"employee" gorm:"embedded;embeddedPrefix:employee_"`
 	Job          JobDTO        `json:"project" gorm:"embedded;embeddedPrefix:project_"`
 	CostCentre   CostCentreDTO `json:"costCentre" gorm:"embedded;embeddedPrefix:cost_centre_"`
@@ -66,23 +68,32 @@ type SupervisorRecordDTO struct {
 	DeviceID     string     `json:"deviceId"`
 }
 
+type DefinedWorkHoursDTO struct {
+	Start  string `json:"start"`
+	Finish string `json:"finish"`
+	Break  int32  `json:"break"`
+}
+
 type OktediTimesheetDetailDTO struct {
 	OktediTimesheet   OktediTimesheetDTO    `json:"timesheet"`
 	ClockinRecords    []ClockinRecordDTO    `json:"clockinRecords"`
 	SupervisorRecords []SupervisorRecordDTO `json:"supervisorRecords"`
+	DefinedWorkHours  *DefinedWorkHoursDTO  `json:"definedWorkHours"`
 }
 
 func (dto OktediTimesheetDTO) MarshalJSON() ([]byte, error) {
 	type Alias OktediTimesheetDTO
 	return json.Marshal(&struct {
-		Date       string `json:"date"`
-		StartTime  string `json:"startTime"`
-		FinishTime string `json:"finishTime"`
+		Date       string  `json:"date"`
+		StartTime  string  `json:"startTime"`
+		FinishTime string  `json:"finishTime"`
+		TotalHours float64 `json:"totalHours"`
 		*Alias
 	}{
 		Date:       dto.Date.Format("2006-01-02"),
 		StartTime:  dto.StartTime.Format("2006-01-02T15:04:05"),
 		FinishTime: dto.FinishTime.Format("2006-01-02T15:04:05"),
+		TotalHours: dto.TotalHours,
 		Alias:      (*Alias)(&dto),
 	})
 }
@@ -99,7 +110,7 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 	var counts TimesheetCounts
 
 	query := db.Table("oktedi_timesheets t1").
-		Select(`t1.*, 
+		Select(`t1.*, t1.break, (t1.hours + COALESCE(t1.break, 0) / 60.0) as total_hours,
             e.EmployeeId as employee_id, e.Code as employee_code, e.FirstName as employee_first_name, e.Surname as employee_surname, e.JobID as employee_job_id, e.CostCentreID as employee_cost_centre_id,
             ej.JobId as employee_job_id, ej.JobNo as employee_job_job_no, ej.Description as employee_job_description,
             ecc.CostCentreId as employee_cost_centre_id, ecc.Code as employee_cost_centre_code, ecc.Description as employee_cost_centre_description,
@@ -129,6 +140,8 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 		"hours":        "t1.hours",
 		"reviewStatus": "t1.review_status",
 		"approved":     "t1.approved",
+		"break":        "t1.break",
+		"totalHours":   "(t1.hours + COALESCE(t1.break, 0) / 60.0)",
 		"employeeCode": "e.Code",
 		"firstName":    "e.FirstName",
 		"surname":      "e.Surname",

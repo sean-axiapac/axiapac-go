@@ -58,16 +58,19 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 	// Map EmployeeID -> OktediTimesheet
 	timesheetMap := make(map[int32]model.OktediTimesheet)
 
-	// Track ClockIn IDs for status updates
+	// Step 1: Prepare from Clock-in Records (focus on start/finish)
 	processedClockInIDs, errorClockInIDs := processClockInRecords(date, clockInRecords, refData, timesheetMap)
 
-	// Apply Supervisor Records (Overwrites)
+	// Step 2: Apply Supervisor Overrides (starttime, finishtime, and job/costcentres)
 	applySupervisorRecords(date, supervisorRecords, timesheetMap, refData)
 
-	// 3.5 Adjust final timesheets (Snapping and Break Deduction)
-	adjustFinalTimesheets(timesheetMap, refData)
+	// Step 3: Apply Snapping rules based on defined work hours
+	applySnappingRules(timesheetMap, refData)
 
-	// 3.6 Update review status based on normal hours matching
+	// Step 4: Deduct break time if applicable
+	applyBreaks(timesheetMap)
+
+	// Update review status based on final hours matching
 	updateReviewStatus(timesheetMap, refData)
 
 	// 4. Persist to DB
@@ -277,6 +280,7 @@ func processClockInRecords(date time.Time, clockInRecords []*model.ClockinRecord
 			FinishTime:   *endTime,
 			ReviewStatus: "",
 			Approved:     false,
+			Break:        GetBreakMinutes(date, emp, refData.EmpWorkHours, refData.RegionWorkHours),
 		}
 
 		if emp.JobID != 0 {
@@ -308,6 +312,7 @@ func applySupervisorRecords(date time.Time, supervisorRecords []model.Supervisor
 				Date:         date,
 				ReviewStatus: "",
 				Approved:     false,
+				Break:        GetBreakMinutes(date, refData.EmpMap[empID], refData.EmpWorkHours, refData.RegionWorkHours),
 			}
 		}
 
@@ -417,39 +422,39 @@ func updateProcessStatuses(db *gorm.DB, processedIDs, skippedIDs, errorIDs []str
 	}
 }
 
-func adjustFinalTimesheets(timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
+func applySnappingRules(timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
 	for empID, ts := range timesheetMap {
 		emp, ok := refData.EmpMap[empID]
 		if !ok {
 			continue
 		}
 
-		// 1. Apply snapping rules (15m early / 10m late etc)
+		// Apply snapping rules (15m early / 10m late etc)
 		adjusted, err := AdjustTimesheetHours(ts.StartTime, ts.FinishTime, emp, refData.EmpWorkHours, refData.RegionWorkHours)
 		if err != nil {
 			fmt.Printf("Warning: Failed to adjust times for employee %d: %v\n", empID, err)
-			// Continue with unadjusted times if error
 		} else {
 			ts.StartTime = adjusted.StartTime
 			ts.FinishTime = adjusted.FinishTime
 		}
 
-		// 2. Calculate hours
+		// Recalculate hours after snapping
 		duration := ts.FinishTime.Sub(ts.StartTime)
-		hours := duration.Hours()
-
-		// 3. Deduct break if defined
-		def, found := GetDefinedWorkHours(ts.StartTime, emp, refData.EmpWorkHours, refData.RegionWorkHours)
-		if found && def.Break > 0 {
-			hours -= float64(def.Break) / 60.0
-		}
-
-		if hours < 0 {
-			hours = 0
-		}
-
-		ts.Hours = hours
+		ts.Hours = math.Max(0, duration.Hours())
 		timesheetMap[empID] = ts
+	}
+}
+
+func applyBreaks(timesheetMap map[int32]model.OktediTimesheet) {
+	for empID, ts := range timesheetMap {
+		if ts.Break != nil && *ts.Break > 0 {
+			breakHours := float64(*ts.Break) / 60.0
+			// Deduct break only if total hours greater than break time
+			if ts.Hours > breakHours {
+				ts.Hours -= breakHours
+				timesheetMap[empID] = ts
+			}
+		}
 	}
 }
 
@@ -457,6 +462,25 @@ func updateReviewStatus(timesheetMap map[int32]model.OktediTimesheet, refData *R
 	for empID, ts := range timesheetMap {
 		emp, ok := refData.EmpMap[empID]
 		if !ok {
+			continue
+		}
+
+		// If no project assigned, mark as required
+		if ts.ProjectID == nil {
+			ts.ReviewStatus = "required"
+			timesheetMap[empID] = ts
+			continue
+		}
+
+		if emp.JobID != 0 && *ts.ProjectID != emp.JobID {
+			ts.ReviewStatus = "required"
+			timesheetMap[empID] = ts
+			continue
+		}
+
+		if emp.CostCentreID != 0 && (ts.CostCentreID == nil || *ts.CostCentreID != emp.CostCentreID) {
+			ts.ReviewStatus = "required"
+			timesheetMap[empID] = ts
 			continue
 		}
 
@@ -481,13 +505,18 @@ func updateReviewStatus(timesheetMap map[int32]model.OktediTimesheet, refData *R
 			defFinish = defFinish.Add(24 * time.Hour)
 		}
 
-		expectedHours := defFinish.Sub(defStart).Hours() - float64(def.Break)/60.0
+		expectedHours := defFinish.Sub(defStart).Hours()
 		if expectedHours < 0 {
 			expectedHours = 0
 		}
 
+		actualTotal := ts.Hours
+		if ts.Break != nil && *ts.Break > 0 {
+			actualTotal += float64(*ts.Break) / 60.0
+		}
+
 		// Use a small epsilon for float comparison to avoid precision issues
-		if math.Abs(ts.Hours-expectedHours) > 0.001 {
+		if math.Abs(actualTotal-expectedHours) > 0.001 {
 			ts.ReviewStatus = "required"
 		} else {
 			ts.ReviewStatus = ""

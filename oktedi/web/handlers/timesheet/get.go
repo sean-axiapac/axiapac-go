@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"axiapac.com/axiapac/core/models"
 	"axiapac.com/axiapac/oktedi/model"
 	web "axiapac.com/axiapac/web/common"
 	"github.com/gin-gonic/gin"
@@ -62,13 +63,20 @@ func (ep *Endpoint) Get(c *gin.Context) {
 		FinishTime:   ts.FinishTime,
 		ReviewStatus: ts.ReviewStatus,
 		Approved:     ts.Approved,
+		Break:        ts.Break,
+		TotalHours:   ts.Hours,
 		TimesheetID:  ts.TimesheetID,
-		Employee: EmployeeDTO{
-			ID:        ts.Employee.EmployeeID,
-			Code:      ts.Employee.Code,
-			FirstName: ts.Employee.FirstName,
-			Surname:   ts.Employee.Surname,
-		},
+	}
+
+	if ts.Break != nil {
+		dto.TotalHours += float64(*ts.Break) / 60.0
+	}
+
+	dto.Employee = EmployeeDTO{
+		ID:        ts.Employee.EmployeeID,
+		Code:      ts.Employee.Code,
+		FirstName: ts.Employee.FirstName,
+		Surname:   ts.Employee.Surname,
 	}
 
 	if ts.Project.JobID != 0 {
@@ -113,10 +121,35 @@ func (ep *Endpoint) Get(c *gin.Context) {
 		}
 	}
 
+	// Fetch Defined Work Hours
+	dayOfWeek := int32(ts.Date.Weekday())
+	var defWorkHours *DefinedWorkHoursDTO
+
+	if ts.Employee.UseCalendarWorkHours {
+		var rwh models.RegionWorkHour
+		if err := db.Where("CalendarRegionId = ? AND DayOfWeek = ?", ts.Employee.CalendarRegionID, dayOfWeek).First(&rwh).Error; err == nil {
+			defWorkHours = &DefinedWorkHoursDTO{
+				Start:  rwh.Start,
+				Finish: rwh.Finish,
+				Break:  rwh.Break,
+			}
+		}
+	} else {
+		var ewh models.EmployeeWorkHour
+		if err := db.Where("EmployeeId = ? AND DayOfWeek = ?", ts.Employee.EmployeeID, dayOfWeek).First(&ewh).Error; err == nil {
+			defWorkHours = &DefinedWorkHoursDTO{
+				Start:  ewh.Start,
+				Finish: ewh.Finish,
+				Break:  ewh.Break,
+			}
+		}
+	}
+
 	res := OktediTimesheetDetailDTO{
 		OktediTimesheet:   dto,
 		ClockinRecords:    clockinDTOs,
 		SupervisorRecords: supervisorDTOs,
+		DefinedWorkHours:  defWorkHours,
 	}
 
 	c.JSON(http.StatusOK, web.NewSuccessResponse(res))

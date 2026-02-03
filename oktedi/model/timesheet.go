@@ -23,6 +23,7 @@ type OktediTimesheet struct {
 	FinishTime   time.Time `gorm:"column:finish_time;type:datetime"`
 	ReviewStatus string    `gorm:"column:review_status;type:varchar(50)"`
 	Approved     bool      `gorm:"column:approved;type:bool;not null"`
+	Break        *int32    `gorm:"column:break;type:int"`
 
 	// Foreign Keys
 	EmployeeID   int32  `gorm:"column:employee_id;not null"`

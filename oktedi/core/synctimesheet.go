@@ -19,11 +19,13 @@ import (
 
 var tz = time.FixedZone("AEST", 10*3600)
 
-func CreateClient(user *models.User) (*v1.AxiapacClient, error) {
+func CreateClient(user *models.User, domain string) (*v1.AxiapacClient, error) {
 	secret := os.Getenv("AXIAPAC_SIGNING_SECRET")
 	url := os.Getenv("AXIAPAC_URL")
-	if url == "" {
+	if domain == "localhost" {
 		url = "http://localhost:8080"
+	} else {
+		url = fmt.Sprintf("https://%s", domain)
 	}
 
 	token, err := security.CreateIdentityToken(&security.AxiapacIdentity{
@@ -90,18 +92,17 @@ func SyncOktediTimesheet(db *gorm.DB, client *v1.AxiapacClient, source *model.Ok
 	}
 
 	// Default start time to 08:00 if not set
+	// Default start time to 08:00 if not set
 	start := time.Date(date.Year(), date.Month(), date.Day(), 8, 0, 0, 0, tz)
 	if !source.StartTime.IsZero() {
 		start = source.StartTime
 	}
 
-	finish := start.Add(time.Duration(hours * float64(time.Hour)))
-	if !source.FinishTime.IsZero() {
-		finish = source.FinishTime
-	}
+	// Calculate ORD finish based on duration
+	ordFinish := start.Add(time.Duration(hours * float64(time.Hour)))
 
 	item.StartTime = utils.Ptr(start.Format("15:04"))
-	item.FinishTime = utils.Ptr(finish.Format("15:04"))
+	item.FinishTime = utils.Ptr(ordFinish.Format("15:04"))
 
 	// Resolve Job
 	var jobID int32
@@ -139,6 +140,9 @@ func SyncOktediTimesheet(db *gorm.DB, client *v1.AxiapacClient, source *model.Ok
 
 	dto.TimesheetItems = append(dto.TimesheetItems, *item)
 
+	// Apply break logic
+	applyBreak(dto, source.Break)
+
 	// 3. Resolve existing timesheet ID
 	if source.TimesheetID != nil {
 		dto.ID = int(*source.TimesheetID)
@@ -172,4 +176,40 @@ func SyncOktediTimesheet(db *gorm.DB, client *v1.AxiapacClient, source *model.Ok
 
 	// 5. Update link in Oktedi
 	return db.Model(source).Update("timesheet_id", res.Data.ID).Error
+}
+
+func applyBreak(dto *v1.TimesheetDTO, breakMinutes *int32) {
+	if breakMinutes == nil || *breakMinutes <= 0 {
+		return
+	}
+
+	if len(dto.TimesheetItems) == 0 {
+		return
+	}
+
+	lastItem := &dto.TimesheetItems[len(dto.TimesheetItems)-1]
+
+	// Parse times
+	start, err1 := time.Parse("15:04", *lastItem.FinishTime)
+
+	if err1 != nil {
+		return
+	}
+
+	breakHours := float64(*breakMinutes) / 60.0
+	finish := start.Add(time.Duration(breakHours * float64(time.Hour)))
+
+	breakItem := v1.TimesheetItemDTO{
+		Cost:            0,
+		Hours:           breakHours,
+		ChargeHours:     breakHours,
+		PayrollTimeType: &common.IdCodeDTO{Code: "ORD"},
+		LabourRate:      &common.IdCodeDTO{Code: "BR"},
+		Job:             nil,
+		CostCentre:      nil,
+		StartTime:       utils.Ptr(start.Format("15:04")),
+		FinishTime:      utils.Ptr(finish.Format("15:04")),
+	}
+
+	dto.TimesheetItems = append(dto.TimesheetItems, breakItem)
 }

@@ -115,6 +115,23 @@ func GetDefinedWorkHours(
 	return WorkHourDefinition{}, false
 }
 
+// GetBreakMinutes returns the break duration in minutes if defined in the work hours.
+// Returns nil if no work hours are found.
+func GetBreakMinutes(
+	date time.Time,
+	emp models.Employee,
+	empWorkHours map[int32]map[int32]models.EmployeeWorkHour,
+	regionWorkHours map[int32]map[int32]models.RegionWorkHour,
+) *int32 {
+	def, found := GetDefinedWorkHours(date, emp, empWorkHours, regionWorkHours)
+	if !found {
+		return nil
+	}
+	// Copy the value to return a pointer
+	val := def.Break
+	return &val
+}
+
 func ApplyStartRule(actual, defined time.Time) time.Time {
 	// Rule: 15 min early or 10 min late -> use defined
 	diff := actual.Sub(defined) // negative if early

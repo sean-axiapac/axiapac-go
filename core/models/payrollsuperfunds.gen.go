@@ -8,19 +8,22 @@ const TableNamePayrollSuperFund = "PayrollSuperFunds"
 
 // PayrollSuperFund mapped from table <PayrollSuperFunds>
 type PayrollSuperFund struct {
-	PayrollSuperFundID int32  `gorm:"column:PayrollSuperFundId;primaryKey;autoIncrement:true" json:"PayrollSuperFundId"`
-	Code               string `gorm:"column:Code;not null" json:"Code"`
-	Description        string `gorm:"column:Description;not null" json:"Description"`
-	Phone              string `gorm:"column:Phone;not null" json:"Phone"`
-	DebitAccountID     int32  `gorm:"column:DebitAccountId" json:"DebitAccountId"`
-	DebitDivisionID    int32  `gorm:"column:DebitDivisionId" json:"DebitDivisionId"`
-	ABN                string `gorm:"column:ABN" json:"ABN"`
-	AccountName        string `gorm:"column:AccountName" json:"AccountName"`
-	AccountNumber      int32  `gorm:"column:AccountNumber" json:"AccountNumber"`
-	BSBID              int32  `gorm:"column:BSBId" json:"BSBId"`
-	USI                string `gorm:"column:USI" json:"USI"`
-	BPAYBillerCode     int32  `gorm:"column:BPAYBillerCode" json:"BPAYBillerCode"`
-	Obsolete           bool   `gorm:"column:Obsolete;not null" json:"Obsolete"`
+	PayrollSuperFundID       int32  `gorm:"column:PayrollSuperFundId;primaryKey;autoIncrement:true" json:"PayrollSuperFundId"`
+	Code                     string `gorm:"column:Code;not null" json:"Code"`
+	Description              string `gorm:"column:Description;not null" json:"Description"`
+	FundType                 string `gorm:"column:FundType;not null" json:"FundType"`
+	Phone                    string `gorm:"column:Phone;not null" json:"Phone"`
+	DebitAccountID           int32  `gorm:"column:DebitAccountId" json:"DebitAccountId"`
+	DebitDivisionID          int32  `gorm:"column:DebitDivisionId" json:"DebitDivisionId"`
+	ABN                      string `gorm:"column:ABN" json:"ABN"`
+	AccountName              string `gorm:"column:AccountName" json:"AccountName"`
+	AccountNumber            int32  `gorm:"column:AccountNumber" json:"AccountNumber"`
+	BSBID                    int32  `gorm:"column:BSBId" json:"BSBId"`
+	USI                      string `gorm:"column:USI" json:"USI"`
+	ProductName              string `gorm:"column:ProductName" json:"ProductName"`
+	ElectronicServiceAddress string `gorm:"column:ElectronicServiceAddress" json:"ElectronicServiceAddress"`
+	EmployerNumber           string `gorm:"column:EmployerNumber" json:"EmployerNumber"`
+	Obsolete                 bool   `gorm:"column:Obsolete;not null" json:"Obsolete"`
 }
 
 // TableName PayrollSuperFund's table name

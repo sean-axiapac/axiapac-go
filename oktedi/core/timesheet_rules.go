@@ -69,6 +69,11 @@ func AdjustTimesheetHours(
 	// The actualStart/Finish are passed as full time.Time.
 
 	// 3. Apply comparison rules
+	// skip rule if actual start time and actual finish time are the same
+	if actualStart.Equal(actualFinish) {
+		return AdjustTimesheetResult{StartTime: actualStart, FinishTime: actualFinish}, nil
+	}
+
 	finalStart := ApplyStartRule(actualStart, defStart)
 	finalFinish := ApplyFinishRule(actualFinish, defFinish)
 

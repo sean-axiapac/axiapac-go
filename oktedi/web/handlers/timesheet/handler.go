@@ -38,6 +38,8 @@ type OktediTimesheetUpdateDTO struct {
 	ReviewStatus *string            `json:"reviewStatus,omitempty"`
 	Approved     *bool              `json:"approved,omitempty"`
 	Break        *int32             `json:"break,omitempty"`
+	ProjectID    *int32             `json:"projectId,omitempty"`
+	CostCentreID *int32             `json:"costCentreId,omitempty"`
 }
 
 func (ep *Endpoint) Update(c *gin.Context) {
@@ -63,48 +65,53 @@ func (ep *Endpoint) Update(c *gin.Context) {
 	defer conn.Close()
 
 	// Get the old state of the timesheet
-	var oldTs model.OktediTimesheet
-	if err := db.First(&oldTs, id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
-		return
-	}
-
-	// Convert DTO to map for GORM to handle custom LocalDateTime correctly
-	updates := make(map[string]interface{})
-	if updateDTO.Hours != nil {
-		updates["hours"] = *updateDTO.Hours
-	}
-	if updateDTO.StartTime != nil {
-		updates["start_time"] = updateDTO.StartTime.Time
-	}
-	if updateDTO.FinishTime != nil {
-		updates["finish_time"] = updateDTO.FinishTime.Time
-	}
-	if updateDTO.ReviewStatus != nil {
-		updates["review_status"] = *updateDTO.ReviewStatus
-	}
-	if updateDTO.Approved != nil {
-		updates["approved"] = *updateDTO.Approved
-	}
-	if updateDTO.Break != nil {
-		updates["break"] = *updateDTO.Break
-	}
-
-	// Update the timesheet in the database
-	if err := db.Model(&model.OktediTimesheet{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
-		return
-	}
-
-	// If approved, sync to Axiapac
 	var ts model.OktediTimesheet
 	if err := db.First(&ts, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
 		return
 	}
+	wasApproved := ts.Approved
+
+	// Update the timesheet object from DTO
+	if updateDTO.Hours != nil {
+		ts.Hours = *updateDTO.Hours
+	}
+	if updateDTO.StartTime != nil {
+		ts.StartTime = updateDTO.StartTime.Time
+	}
+	if updateDTO.FinishTime != nil {
+		ts.FinishTime = updateDTO.FinishTime.Time
+	}
+	if updateDTO.ReviewStatus != nil {
+		ts.ReviewStatus = *updateDTO.ReviewStatus
+	}
+	if updateDTO.Approved != nil {
+		ts.Approved = *updateDTO.Approved
+	}
+	if updateDTO.Break != nil {
+		ts.Break = updateDTO.Break
+	}
+	if updateDTO.ProjectID != nil {
+		ts.ProjectID = updateDTO.ProjectID
+	}
+	if updateDTO.CostCentreID != nil {
+		ts.CostCentreID = updateDTO.CostCentreID
+	}
+
+	// Recalculate review status
+	if err := oktedi.RefreshReviewStatus(db, &ts); err != nil {
+		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+		return
+	}
+
+	// Save the timesheet back to the database
+	if err := db.Save(&ts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+		return
+	}
 
 	// Trigger sync only if it's currently approved AND it was previously not approved
-	if ts.Approved && !oldTs.Approved {
+	if ts.Approved && !wasApproved {
 		// Get logged in user id from claims
 		claims, exists := c.Get("claims")
 		if !exists {

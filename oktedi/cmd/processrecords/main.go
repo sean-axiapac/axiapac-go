@@ -236,15 +236,16 @@ func Run(db *gorm.DB, date time.Time) error {
 			return fmt.Errorf("failed to fetch existing timesheets: %w", err)
 		}
 
-		existingMap := make(map[int32]int32) // EmployeeID -> ID
+		existingMap := make(map[int32]model.OktediTimesheet) // EmployeeID -> ID
 		for _, et := range existingTimesheets {
-			existingMap[et.EmployeeID] = et.ID
+			existingMap[et.EmployeeID] = et
 		}
 
 		var timesheets []*model.OktediTimesheet
 		for _, ts := range timesheetMap {
-			if id, exists := existingMap[ts.EmployeeID]; exists {
-				ts.ID = id // Set ID to trigger Update
+			if current, exists := existingMap[ts.EmployeeID]; exists {
+				ts.ID = current.ID // Set ID to trigger Update
+				ts.Approved = current.Approved
 			}
 			timesheets = append(timesheets, ts)
 		}

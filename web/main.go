@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 
+	"ato/super"
+
 	"axiapac.com/axiapac/core"
 	"axiapac.com/axiapac/web/handlers"
 	"github.com/gin-gonic/gin"
@@ -16,6 +18,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer dm.Close()
+	superClient := super.NewClient("0b632965-0a4b-4022-9d18-8e844385cdf5")
 
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{
@@ -36,6 +39,29 @@ func main() {
 			})
 		})
 
+		protected.GET("/v1/superfunds", func(c *gin.Context) {
+			query := c.Query("q")
+			if query == "" {
+				c.JSON(400, gin.H{"error": "query parameter 'q' is required"})
+				return
+			}
+
+			payload, err := superClient.SearchByProduct(c.Request.Context(), super.SearchByProductRequest{
+				Product: query,
+				GUID:    superClient.GUID,
+			})
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			if payload.Response.Exception != nil {
+				c.JSON(400, gin.H{"error": payload.Response.Exception.Description})
+				return
+			}
+
+			c.JSON(200, payload.Response.MatchingFundProducts)
+		})
 	}
 
 	r.Run("0.0.0.0:8090")

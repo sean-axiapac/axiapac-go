@@ -22,7 +22,7 @@ func main() {
 		},
 	})
 
-	gormdb, _ := gorm.Open(mysql.Open("root:development@tcp(10.37.129.2:3306)/Axiapac?parseTime=true"))
+	gormdb, _ := gorm.Open(mysql.Open("root:development@tcp(localhost:3306)/Axiapac?parseTime=true"))
 	g.UseDB(gormdb)
 
 	g.GenerateAllTable()

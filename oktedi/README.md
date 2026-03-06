@@ -14,4 +14,5 @@ at Axiapac.Go root directory, run:
 ```
 make -f oktedi/makefile.mk build
 make -f oktedi/makefile.mk upload
+make -f oktedi/makefile.mk deploy
 ```

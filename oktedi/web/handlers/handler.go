@@ -24,10 +24,10 @@ func WatermelonPushHandler(dm *core.DatabaseManager) gin.HandlerFunc {
 		}
 
 		if err := dm.Exec(c.Request.Context(), "oktedi", func(db *gorm.DB) error {
-			if err := BulkUpsertEmployees(db, push.Changes.Records.Created); err != nil {
+			if err := BulkUpsertEmployeeClockInRecords(db, push.Changes.Records.Created); err != nil {
 				return err
 			}
-			if err := BulkUpsertEmployees(db, push.Changes.Records.Updated); err != nil {
+			if err := BulkUpsertEmployeeClockInRecords(db, push.Changes.Records.Updated); err != nil {
 				return err
 			}
 			// if err := BulkUpsertEmployees(db, push.Changes.Records.Deleted); err != nil {
@@ -46,7 +46,7 @@ func WatermelonPushHandler(dm *core.DatabaseManager) gin.HandlerFunc {
 	}
 }
 
-func BulkUpsertEmployees(db *gorm.DB, employees []EmployeeClockInRecord) error {
+func BulkUpsertEmployeeClockInRecords(db *gorm.DB, employees []EmployeeClockInRecord) error {
 
 	// Bulk upsert
 	if len(employees) > 0 {

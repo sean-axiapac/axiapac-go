@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"axiapac.com/axiapac/core"
@@ -16,6 +17,7 @@ import (
 	"axiapac.com/axiapac/web/handlers"
 	"axiapac.com/axiapac/web/middlewares"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gorm"
 )
 
@@ -201,7 +203,8 @@ func main() {
 
 		protected.PUT("/employees/:id", func(c *gin.Context) {
 			// get body "tag"
-			id := c.Param("id")
+			idStr := c.Param("id")
+			id, _ := strconv.Atoi(idStr)
 			var body struct {
 				Tag string `json:"tag"`
 			}
@@ -210,15 +213,40 @@ func main() {
 				return
 			}
 			ctx := c.Request.Context()
+
 			if err := dm.Exec(ctx, "oktedi", func(db *gorm.DB) error {
-				result := db.Exec("UPDATE employees SET identificationTag = ? WHERE employeeid = ?", body.Tag, id)
-				if result.Error != nil {
-					return result.Error
-				}
-				if result.RowsAffected == 0 {
-					return errors.New("no employee found with the given ID")
-				}
-				return nil
+				return db.Transaction(func(tx *gorm.DB) error {
+					result := tx.Exec("UPDATE employees SET identificationTag = ? WHERE employeeid = ?", body.Tag, id)
+					if result.Error != nil {
+						return result.Error
+					}
+
+					// if result.RowsAffected >= 0 {
+					// 	return errors.New("no employee found with the given ID")
+					// }
+
+					// Add history and audit record
+					var userID int32
+					// Try to get UserId from claims
+					if claims, ok := c.Get("claims"); ok {
+						if m, ok := claims.(jwt.MapClaims); ok {
+							if uid, ok := m["nameid"].(string); ok {
+								if id, err := strconv.Atoi(uid); err == nil {
+									userID = int32(id)
+								}
+							} else if uid, ok := m["nameid"].(float64); ok {
+								userID = int32(uid)
+							}
+						}
+					}
+
+					auditMsg := "Identification Tag changed to " + body.Tag
+					if err := core.AuditChange(tx, userID, "Employee", int32(id), 2, c.ClientIP(), "Employee identificationtag updated", auditMsg, auditMsg); err != nil {
+						return err
+					}
+
+					return nil
+				})
 			}); err != nil {
 				c.JSON(http.StatusInternalServerError, common.NewErrorResponse(err.Error()))
 				return

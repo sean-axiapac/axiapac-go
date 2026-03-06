@@ -465,63 +465,97 @@ func updateReviewStatus(timesheetMap map[int32]model.OktediTimesheet, refData *R
 			continue
 		}
 
-		// If no project assigned, mark as required
-		if ts.ProjectID == nil {
-			ts.ReviewStatus = "required"
-			timesheetMap[empID] = ts
-			continue
-		}
-
-		if emp.JobID != 0 && *ts.ProjectID != emp.JobID {
-			ts.ReviewStatus = "required"
-			timesheetMap[empID] = ts
-			continue
-		}
-
-		if emp.CostCentreID != 0 && (ts.CostCentreID == nil || *ts.CostCentreID != emp.CostCentreID) {
-			ts.ReviewStatus = "required"
-			timesheetMap[empID] = ts
-			continue
-		}
-
-		def, found := GetDefinedWorkHours(ts.StartTime, emp, refData.EmpWorkHours, refData.RegionWorkHours)
-		if !found {
-			ts.ReviewStatus = "required"
-			timesheetMap[empID] = ts
-			continue
-		}
-
-		dateBase := time.Date(ts.StartTime.Year(), ts.StartTime.Month(), ts.StartTime.Day(), 0, 0, 0, 0, ts.StartTime.Location())
-		defStart, err1 := ParseTimeOnDate(dateBase, def.Start)
-		defFinish, err2 := ParseTimeOnDate(dateBase, def.Finish)
-
-		if err1 != nil || err2 != nil {
-			ts.ReviewStatus = "required"
-			timesheetMap[empID] = ts
-			continue
-		}
-
-		if defFinish.Before(defStart) {
-			defFinish = defFinish.Add(24 * time.Hour)
-		}
-
-		expectedHours := defFinish.Sub(defStart).Hours()
-		if expectedHours < 0 {
-			expectedHours = 0
-		}
-
-		actualTotal := ts.Hours
-		if ts.Break != nil && *ts.Break > 0 {
-			actualTotal += float64(*ts.Break) / 60.0
-		}
-
-		// Use a small epsilon for float comparison to avoid precision issues
-		if math.Abs(actualTotal-expectedHours) > 0.001 {
-			ts.ReviewStatus = "required"
-		} else {
-			ts.ReviewStatus = ""
-		}
-
+		UpdateSingleReviewStatus(&ts, emp, refData.EmpWorkHours, refData.RegionWorkHours)
 		timesheetMap[empID] = ts
 	}
+}
+
+func UpdateSingleReviewStatus(
+	ts *model.OktediTimesheet,
+	emp models.Employee,
+	empWorkHours map[int32]map[int32]models.EmployeeWorkHour,
+	regionWorkHours map[int32]map[int32]models.RegionWorkHour,
+) {
+	// If no project assigned, mark as required
+	if ts.ProjectID == nil {
+		ts.ReviewStatus = "required"
+		return
+	}
+
+	if emp.JobID != 0 && *ts.ProjectID != emp.JobID {
+		ts.ReviewStatus = "required"
+		return
+	}
+
+	if emp.CostCentreID != 0 && (ts.CostCentreID == nil || *ts.CostCentreID != emp.CostCentreID) {
+		ts.ReviewStatus = "required"
+		return
+	}
+
+	def, found := GetDefinedWorkHours(ts.StartTime, emp, empWorkHours, regionWorkHours)
+	if !found {
+		ts.ReviewStatus = "required"
+		return
+	}
+
+	dateBase := time.Date(ts.StartTime.Year(), ts.StartTime.Month(), ts.StartTime.Day(), 0, 0, 0, 0, ts.StartTime.Location())
+	defStart, err1 := ParseTimeOnDate(dateBase, def.Start)
+	defFinish, err2 := ParseTimeOnDate(dateBase, def.Finish)
+
+	if err1 != nil || err2 != nil {
+		ts.ReviewStatus = "required"
+		return
+	}
+
+	if defFinish.Before(defStart) {
+		defFinish = defFinish.Add(24 * time.Hour)
+	}
+
+	expectedHours := defFinish.Sub(defStart).Hours()
+	if expectedHours < 0 {
+		expectedHours = 0
+	}
+
+	actualTotal := ts.Hours
+	if ts.Break != nil && *ts.Break > 0 {
+		actualTotal += float64(*ts.Break) / 60.0
+	}
+
+	// Use a small epsilon for float comparison to avoid precision issues
+	if math.Abs(actualTotal-expectedHours) > 0.001 {
+		ts.ReviewStatus = "required"
+	} else {
+		ts.ReviewStatus = ""
+	}
+}
+func RefreshReviewStatus(db *gorm.DB, ts *model.OktediTimesheet) error {
+	var emp models.Employee
+	if err := db.First(&emp, ts.EmployeeID).Error; err != nil {
+		return err
+	}
+
+	empWHMap := make(map[int32]map[int32]models.EmployeeWorkHour)
+	var empWorkHours []models.EmployeeWorkHour
+	if err := db.Where("EmployeeId = ?", emp.EmployeeID).Find(&empWorkHours).Error; err == nil {
+		for _, wh := range empWorkHours {
+			if _, ok := empWHMap[wh.EmployeeID]; !ok {
+				empWHMap[wh.EmployeeID] = make(map[int32]models.EmployeeWorkHour)
+			}
+			empWHMap[wh.EmployeeID][wh.DayOfWeek] = wh
+		}
+	}
+
+	regionWHMap := make(map[int32]map[int32]models.RegionWorkHour)
+	var regionWorkHours []models.RegionWorkHour
+	if err := db.Where("CalendarRegionId = ?", emp.CalendarRegionID).Find(&regionWorkHours).Error; err == nil {
+		for _, wh := range regionWorkHours {
+			if _, ok := regionWHMap[wh.CalendarRegionID]; !ok {
+				regionWHMap[wh.CalendarRegionID] = make(map[int32]models.RegionWorkHour)
+			}
+			regionWHMap[wh.CalendarRegionID][wh.DayOfWeek] = wh
+		}
+	}
+
+	UpdateSingleReviewStatus(ts, emp, empWHMap, regionWHMap)
+	return nil
 }

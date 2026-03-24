@@ -241,7 +241,7 @@ func ProcessTimesheets(db *gorm.DB, client *v1.AxiapacClient, sources []model.Ok
 
 		if err == nil {
 			// Found existing timesheet
-			if existing.EraID == int32(eraid.Draft) {
+			if existing.EraID == int32(eraid.Present) {
 				// It's a draft, so we can update it
 				ts.ID = int(existing.TimesheetID)
 				fmt.Printf("[UPDATE] updating existing DRAFT timesheet ID=%d\n", ts.ID)

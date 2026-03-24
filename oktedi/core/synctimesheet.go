@@ -74,7 +74,7 @@ func SyncOktediTimesheet(db *gorm.DB, client *v1.AxiapacClient, source *model.Ok
 
 	dto := &v1.TimesheetDTO{
 		ID:             0,
-		EraId:          eraid.Draft,
+		EraId:          eraid.Present,
 		Employee:       common.IdCodeDTO{ID: emp.EmployeeID, Code: emp.Code},
 		Date:           date.Format("2006-01-02"),
 		PaidHours:      hours,

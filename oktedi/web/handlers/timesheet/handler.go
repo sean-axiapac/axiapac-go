@@ -22,13 +22,11 @@ type Endpoint struct {
 func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 	endpoint := &Endpoint{base: common.Handler{Dm: dm}}
 	r.POST("/timesheets/search", endpoint.Search)
+	r.POST("/timesheets/export", endpoint.Export)
 	r.GET("/timesheets/:id", endpoint.Get)
 	r.PUT("/timesheets/:id", endpoint.Update)
-	// r.GET("/owner-disbursments/:id", endpoint.Find)
-	// r.GET("/owner-disbursments/:id/statements", endpoint.ListStatements)
-
-	// convert records to oktedi timesheets
 	r.POST("/timesheets/prepare", endpoint.Prepare)
+	r.POST("/timesheets/sign-off", endpoint.SignOff)
 }
 
 type OktediTimesheetUpdateDTO struct {
@@ -40,6 +38,7 @@ type OktediTimesheetUpdateDTO struct {
 	Break        *int32             `json:"break,omitempty"`
 	ProjectID    *int32             `json:"projectId,omitempty"`
 	CostCentreID *int32             `json:"costCentreId,omitempty"`
+	Notes        *string            `json:"notes,omitempty"`
 }
 
 func (ep *Endpoint) Update(c *gin.Context) {
@@ -97,11 +96,16 @@ func (ep *Endpoint) Update(c *gin.Context) {
 	if updateDTO.CostCentreID != nil {
 		ts.CostCentreID = updateDTO.CostCentreID
 	}
+	if updateDTO.Notes != nil {
+		ts.Notes = *updateDTO.Notes
+	}
 
 	// Recalculate review status
-	if err := oktedi.RefreshReviewStatus(db, &ts); err != nil {
-		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
-		return
+	if ts.ReviewStatus != "accurate" {
+		if err := oktedi.RefreshReviewStatus(db, &ts); err != nil {
+			c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+			return
+		}
 	}
 
 	// Save the timesheet back to the database

@@ -46,6 +46,7 @@ type OktediTimesheetDTO struct {
 	Job          JobDTO        `json:"project" gorm:"embedded;embeddedPrefix:project_"`
 	CostCentre   CostCentreDTO `json:"costCentre" gorm:"embedded;embeddedPrefix:cost_centre_"`
 	TimesheetID  *int32        `json:"timesheetId"`
+	Notes        string        `json:"notes"`
 }
 
 type ClockinRecordDTO struct {
@@ -105,18 +106,9 @@ type TimesheetCounts struct {
 	Required    int64
 }
 
-func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]OktediTimesheetDTO, TimesheetCounts, error) {
-	var results []OktediTimesheetDTO
-	var counts TimesheetCounts
-
+func BuildSearchQuery(db *gorm.DB, params SearchParams) *gorm.DB {
 	query := db.Table("oktedi_timesheets t1").
-		Select(`t1.*, t1.break, (t1.hours + COALESCE(t1.break, 0) / 60.0) as total_hours,
-            e.EmployeeId as employee_id, e.Code as employee_code, e.FirstName as employee_first_name, e.Surname as employee_surname, e.JobID as employee_job_id, e.CostCentreID as employee_cost_centre_id,
-            ej.JobId as employee_job_id, ej.JobNo as employee_job_job_no, ej.Description as employee_job_description,
-            ecc.CostCentreId as employee_cost_centre_id, ecc.Code as employee_cost_centre_code, ecc.Description as employee_cost_centre_description,
-            j.JobId as project_id, j.JobNo as project_job_no, j.Description as project_description,
-            cc.CostCentreId as cost_centre_id, cc.Code as cost_centre_code, cc.Description as cost_centre_description`).
-		Joins("JOIN employees e ON e.employeeid = t1.employee_id").
+		Joins("JOIN Employees e ON e.EmployeeId = t1.employee_id").
 		Joins("LEFT JOIN jobs ej ON ej.jobid = e.jobid").
 		Joins("LEFT JOIN costcentres ecc ON ecc.costcentreid = e.costcentreid").
 		Joins("LEFT JOIN jobs j ON j.jobid = t1.project_id").
@@ -127,7 +119,7 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 		query = query.Where("t1.project_id IN ?", params.Projects)
 	}
 	if len(params.Supervisors) > 0 {
-		query = query.Where("e.reportstoid IN ?", params.Supervisors)
+		query = query.Where("e.ReportsToId IN ?", params.Supervisors)
 	}
 	if len(params.Employees) > 0 {
 		query = query.Where("t1.employee_id IN ?", params.Employees)
@@ -147,6 +139,7 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 		"surname":      "e.Surname",
 		"employeeId":   "t1.employee_id",
 		"projectId":    "t1.project_id",
+		"notes":        "t1.notes",
 
 		// UI custom fields
 		"name":        "concat(e.FirstName, ' ', e.Surname)",
@@ -216,6 +209,23 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 		}
 	}
 
+	return query
+}
+
+func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]OktediTimesheetDTO, TimesheetCounts, error) {
+	var results []OktediTimesheetDTO
+	var counts TimesheetCounts
+
+	query := BuildSearchQuery(db, params)
+
+	// Apply Select
+	query = query.Select(`t1.*, t1.break, (t1.hours + COALESCE(t1.break, 0) / 60.0) as total_hours,
+            e.EmployeeId as employee_id, e.Code as employee_code, e.FirstName as employee_first_name, e.Surname as employee_surname, e.JobID as employee_job_id, e.CostCentreID as employee_cost_centre_id,
+            ej.JobId as employee_job_id, ej.JobNo as employee_job_job_no, ej.Description as employee_job_description,
+            ecc.CostCentreId as employee_cost_centre_id, ecc.Code as employee_cost_centre_code, ecc.Description as employee_cost_centre_description,
+            j.JobId as project_id, j.JobNo as project_job_no, j.Description as project_description,
+            cc.CostCentreId as cost_centre_id, cc.Code as cost_centre_code, cc.Description as cost_centre_description`)
+
 	// Calculate counts using query clones
 	if err := query.Session(&gorm.Session{}).Count(&counts.Total).Error; err != nil {
 		return nil, counts, err
@@ -228,6 +238,25 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 	}
 	if err := query.Session(&gorm.Session{}).Where("t1.review_status = ?", "required").Count(&counts.Required).Error; err != nil {
 		return nil, counts, err
+	}
+
+	// fieldMap is duplicated logic here for sorts, maybe refactor later if needed
+	fieldMap := map[string]string{
+		"id":           "t1.id",
+		"date":         "t1.date",
+		"hours":        "t1.hours",
+		"reviewStatus": "t1.review_status",
+		"approved":     "t1.approved",
+		"break":        "t1.break",
+		"totalHours":   "(t1.hours + COALESCE(t1.break, 0) / 60.0)",
+		"employeeCode": "e.Code",
+		"firstName":    "e.FirstName",
+		"surname":      "e.Surname",
+		"employeeId":   "t1.employee_id",
+		"projectId":    "t1.project_id",
+		"notes":        "t1.notes",
+		"name":         "concat(e.FirstName, ' ', e.Surname)",
+		"assignments":  "concat(j.jobNo, '/',cc.code)",
 	}
 
 	// Apply Sorts
@@ -247,7 +276,13 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 		query = query.Order("t1.date DESC, e.Surname ASC")
 	}
 
-	query = query.Limit(limit).Offset(offset)
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	if offset > 0 {
+		query = query.Offset(offset)
+	}
 
 	err := query.Find(&results).Error
 	if err != nil {

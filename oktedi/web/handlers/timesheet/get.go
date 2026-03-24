@@ -66,6 +66,7 @@ func (ep *Endpoint) Get(c *gin.Context) {
 		Break:        ts.Break,
 		TotalHours:   ts.Hours,
 		TimesheetID:  ts.TimesheetID,
+		Notes:        ts.Notes,
 	}
 
 	if ts.Break != nil {

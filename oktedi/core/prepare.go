@@ -398,7 +398,15 @@ func persistTimesheets(db *gorm.DB, dateStr string, timesheetMap map[int32]model
 			ts.TimesheetID = existing.TimesheetID
 			ts.Approved = existing.Approved // Preserve Approved status
 		}
+		// don't save approved timesheets
+		if ts.Approved {
+			continue
+		}
 		timesheets = append(timesheets, ts)
+	}
+
+	if len(timesheets) == 0 {
+		return nil
 	}
 
 	if err := db.Save(&timesheets).Error; err != nil {

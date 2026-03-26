@@ -64,6 +64,9 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 	// Step 2: Apply Supervisor Overrides (starttime, finishtime, and job/costcentres)
 	applySupervisorRecords(date, supervisorRecords, timesheetMap, refData)
 
+	// Step 2.5: Remove seconds from start and finish times
+	removeSeconds(timesheetMap)
+
 	// Step 3: Apply Snapping rules based on defined work hours
 	applySnappingRules(timesheetMap, refData)
 
@@ -427,6 +430,18 @@ func updateProcessStatuses(db *gorm.DB, processedIDs, skippedIDs, errorIDs []str
 	}
 	if len(errorIDs) > 0 {
 		db.Model(&model.ClockinRecord{}).Where("id IN ?", errorIDs).Update("process_status", "error")
+	}
+}
+
+func removeSeconds(timesheetMap map[int32]model.OktediTimesheet) {
+	for empID, ts := range timesheetMap {
+		ts.StartTime = ts.StartTime.Truncate(time.Minute)
+		ts.FinishTime = ts.FinishTime.Truncate(time.Minute)
+
+		// Recalculate hours
+		duration := ts.FinishTime.Sub(ts.StartTime)
+		ts.Hours = math.Max(0, duration.Hours())
+		timesheetMap[empID] = ts
 	}
 }
 

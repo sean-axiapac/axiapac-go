@@ -37,6 +37,7 @@ type ReferenceData struct {
 	JobCCMap        map[int32]map[string]models.CostCentre
 	EmpWorkHours    map[int32]map[int32]models.EmployeeWorkHour
 	RegionWorkHours map[int32]map[int32]models.RegionWorkHour
+	TimeTypeMap     map[int32]models.PayrollTimeType
 }
 
 func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareOptions) error {
@@ -64,7 +65,10 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 	// Step 2: Apply Supervisor Overrides (starttime, finishtime, and job/costcentres)
 	applySupervisorRecords(date, supervisorRecords, timesheetMap, refData)
 
-	// Step 2.5: Remove seconds from start and finish times
+	// Step 2.5: Inject absent rows for rostered-on employees with no record
+	injectAbsentRows(date, refData.Employees, opts, timesheetMap, refData)
+
+	// Step 2.6: Remove seconds from start and finish times
 	removeSeconds(timesheetMap)
 
 	// Step 3: Apply Snapping rules based on defined work hours
@@ -74,7 +78,7 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 	applyBreaks(timesheetMap)
 
 	// Update review status based on final hours matching
-	updateReviewStatus(timesheetMap, refData)
+	updateReviewStatus(date, timesheetMap, refData)
 
 	// 4. Persist to DB
 	if err := persistTimesheets(db, dateStr, timesheetMap); err != nil {
@@ -164,6 +168,15 @@ func fetchReferenceData(db *gorm.DB) (*ReferenceData, error) {
 		regionWHMap[wh.CalendarRegionID][wh.DayOfWeek] = wh
 	}
 
+	var timeTypes []models.PayrollTimeType
+	if err := db.Find(&timeTypes).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch payroll time types: %w", err)
+	}
+	ttMap := make(map[int32]models.PayrollTimeType)
+	for _, tt := range timeTypes {
+		ttMap[tt.PayrollTimeTypeID] = tt
+	}
+
 	return &ReferenceData{
 		Employees:       employees,
 		EmpMap:          empMap,
@@ -172,6 +185,7 @@ func fetchReferenceData(db *gorm.DB) (*ReferenceData, error) {
 		JobCCMap:        jobCCMap,
 		EmpWorkHours:    empWHMap,
 		RegionWorkHours: regionWHMap,
+		TimeTypeMap:     ttMap,
 	}, nil
 }
 
@@ -399,7 +413,10 @@ func persistTimesheets(db *gorm.DB, dateStr string, timesheetMap map[int32]model
 		if existing, exists := existingMap[ts.EmployeeID]; exists {
 			ts.ID = existing.ID
 			ts.TimesheetID = existing.TimesheetID
-			ts.Approved = existing.Approved // Preserve Approved status
+			ts.Approved = existing.Approved
+			if shouldPreserveAbsent(existing) {
+				continue
+			}
 		}
 		// don't save approved timesheets
 		if ts.Approved {
@@ -481,10 +498,28 @@ func applyBreaks(timesheetMap map[int32]model.OktediTimesheet) {
 	}
 }
 
-func updateReviewStatus(timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
+func updateReviewStatus(date time.Time, timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
 	for empID, ts := range timesheetMap {
 		emp, ok := refData.EmpMap[empID]
 		if !ok {
+			continue
+		}
+
+		// Not-rostered guard — highest priority
+		var timeType *models.PayrollTimeType
+		if emp.RosterPayrollTimeTypeID != 0 {
+			if tt, ok := refData.TimeTypeMap[emp.RosterPayrollTimeTypeID]; ok {
+				timeType = &tt
+			}
+		}
+		if !IsRosteredOn(emp, timeType, date) {
+			ts.ReviewStatus = "not-rostered"
+			timesheetMap[empID] = ts
+			continue
+		}
+
+		// Absent rows — leave their status as-is (Hours=0 is expected)
+		if ts.ReviewStatus == "absent" {
 			continue
 		}
 
@@ -551,6 +586,87 @@ func UpdateSingleReviewStatus(
 		ts.ReviewStatus = ""
 	}
 }
+// shouldPreserveAbsent returns true if an existing absent-tagged timesheet
+// should NOT be overwritten by re-prepare (i.e. a supervisor has already edited it).
+func shouldPreserveAbsent(existing model.OktediTimesheet) bool {
+	if existing.ReviewStatus != "absent" {
+		return false
+	}
+	// Default absent state: Hours=0 and not approved — safe to overwrite
+	if existing.Hours == 0 && !existing.Approved {
+		return false
+	}
+	return true // supervisor added hours or approved the row
+}
+
+func matchesFilter(emp models.Employee, opts PrepareOptions) bool {
+	if len(opts.Employees) > 0 {
+		found := false
+		for _, eid := range opts.Employees {
+			if emp.EmployeeID == eid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	if len(opts.Supervisors) > 0 {
+		found := false
+		for _, sid := range opts.Supervisors {
+			if emp.ReportsToID == sid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func injectAbsentRows(date time.Time, employees []models.Employee, opts PrepareOptions, timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
+	endDateThreshold := date.AddDate(0, 0, -7)
+	for _, emp := range employees {
+		if !matchesFilter(emp, opts) {
+			continue
+		}
+		if emp.RosterPayrollTimeTypeID == 0 {
+			continue
+		}
+		if !emp.EndDate.IsZero() && emp.EndDate.Before(endDateThreshold) {
+			continue
+		}
+		if _, exists := timesheetMap[emp.EmployeeID]; exists {
+			continue
+		}
+		var timeType *models.PayrollTimeType
+		if tt, ok := refData.TimeTypeMap[emp.RosterPayrollTimeTypeID]; ok {
+			timeType = &tt
+		}
+		if !IsRosteredOn(emp, timeType, date) {
+			continue
+		}
+		ts := model.OktediTimesheet{
+			EmployeeID:   emp.EmployeeID,
+			Date:         date,
+			Hours:        0,
+			ReviewStatus: "absent",
+			Approved:     false,
+			Break:        GetBreakMinutes(date, emp, refData.EmpWorkHours, refData.RegionWorkHours),
+		}
+		if emp.JobID != 0 {
+			ts.ProjectID = utils.Ptr(emp.JobID)
+		}
+		if emp.CostCentreID != 0 {
+			ts.CostCentreID = utils.Ptr(emp.CostCentreID)
+		}
+		timesheetMap[emp.EmployeeID] = ts
+	}
+}
+
 func RefreshReviewStatus(db *gorm.DB, ts *model.OktediTimesheet) error {
 	var emp models.Employee
 	if err := db.First(&emp, ts.EmployeeID).Error; err != nil {

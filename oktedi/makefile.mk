@@ -7,7 +7,7 @@ build-server:
 
 build-client:
 	@echo "Building client..."
-	@cd ../axiapac-os && pnpm run build
+	@cd ../oktedi-web && pnpm run build
 
 build: clean build-server build-client 
 	@echo "Build complete!"

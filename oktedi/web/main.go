@@ -86,7 +86,8 @@ func main() {
         employees.surname as last_name,
 		employees.jobid as job_id,
 		employees.costcentreid AS cost_centre_id,
-        employees.reportstoid as supervisor_id
+        employees.reportstoid as supervisor_id,
+		CAST(JSON_EXTRACT(employees.attributes, '$.backToBack.id') AS UNSIGNED) as back_to_back_id
     `).
 					Scan(&employees).Error
 				if err != nil {
@@ -147,7 +148,8 @@ func main() {
         employees.surname as last_name,
 		employees.jobid as job_id,
 		employees.costcentreid AS cost_centre_id,
-        employees.reportstoid as supervisor_id
+        employees.reportstoid as supervisor_id,
+		CAST(JSON_EXTRACT(employees.attributes, '$.backToBack.id') AS UNSIGNED) as back_to_back_id
     `).
 					Where("employees.identificationTag = ?", tag).
 					Order("employees.employeeid").Take(&emp).Error
@@ -169,7 +171,8 @@ func main() {
 							employees.surname as last_name,
 							employees.jobid as job_id,
 							employees.costcentreid AS cost_centre_id,
-							employees.reportstoid as supervisor_id
+							employees.reportstoid as supervisor_id,
+							CAST(JSON_EXTRACT(employees.attributes, '$.backToBack.id') AS UNSIGNED) as back_to_back_id
 						`).
 						Where("employees.reportstoid = ?", emp.ID).
 						Or(`(
@@ -305,6 +308,7 @@ type EmployeeInfo struct {
 	JobID        *uint   `json:"jobId"`
 	CostCentreID *uint   `json:"costCentreId"`
 	SupervisorID *uint   `json:"supervisorId"`
+	BackToBackID *uint   `json:"backToBackId"`
 }
 
 type JobInfo struct {

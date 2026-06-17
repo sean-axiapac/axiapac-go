@@ -3,7 +3,6 @@ package middlewares
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"axiapac.com/axiapac/web/common"
 	"github.com/gin-gonic/gin"
@@ -17,7 +16,13 @@ func parseJwt(tokenStr string, jwtSecret []byte) (*jwt.Token, error) {
 			return nil, jwt.ErrSignatureInvalid
 		}
 		return jwtSecret, nil
-	})
+	},
+		// TEMP WORKAROUND: skip exp/nbf/iat validation so the kiosk's hardcoded
+		// (now-expired) token keeps working until it is rotated. Signature is
+		// still verified. REVERT this option (and restore the exp check below)
+		// once the kiosk ships a fresh token.
+		jwt.WithoutClaimsValidation(),
+	)
 	return token, err
 }
 
@@ -57,11 +62,13 @@ func Authentication(jwtSecret []byte) gin.HandlerFunc {
 
 		// Optional: check claims
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			// Example: check exp
-			if exp, ok := claims["exp"].(float64); ok && int64(exp) < time.Now().Unix() {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, common.NewErrorResponse("token expired"))
-				return
-			}
+			// TEMP WORKAROUND: exp check disabled to let the kiosk's expired
+			// hardcoded token through. Restore this block when reverting
+			// jwt.WithoutClaimsValidation() in parseJwt.
+			// if exp, ok := claims["exp"].(float64); ok && int64(exp) < time.Now().Unix() {
+			// 	c.AbortWithStatusJSON(http.StatusUnauthorized, common.NewErrorResponse("token expired"))
+			// 	return
+			// }
 
 			// Pass claims into context
 			c.Set("claims", claims)

@@ -6,6 +6,7 @@ import (
 
 	"axiapac.com/axiapac/core"
 	"axiapac.com/axiapac/oktedi/model"
+	oktedicommon "axiapac.com/axiapac/oktedi/web/common"
 	"axiapac.com/axiapac/utils"
 	"axiapac.com/axiapac/web/common"
 	"github.com/gin-gonic/gin"
@@ -23,7 +24,8 @@ func WatermelonPushHandler(dm *core.DatabaseManager) gin.HandlerFunc {
 			return
 		}
 
-		if err := dm.Exec(c.Request.Context(), "oktedi", func(db *gorm.DB) error {
+		hostname := oktedicommon.GetHostname(c.Request.Host)
+		if err := dm.Exec(c.Request.Context(), hostname, func(db *gorm.DB) error {
 			if err := BulkUpsertEmployeeClockInRecords(db, push.Changes.Records.Created); err != nil {
 				return err
 			}

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"axiapac.com/axiapac/core"
+	oktedicommon "axiapac.com/axiapac/oktedi/web/common"
 	clockin "axiapac.com/axiapac/oktedi/web/handlers"
 	"axiapac.com/axiapac/oktedi/web/handlers/timesheet"
 	"axiapac.com/axiapac/web/common"
@@ -74,7 +75,8 @@ func main() {
 			var jobs []JobInfo
 			var costCentres []CostCentreInfo
 
-			if err := dm.Exec(ctx, "oktedi", func(db *gorm.DB) error {
+			hostname := oktedicommon.GetHostname(c.Request.Host)
+			if err := dm.Exec(ctx, hostname, func(db *gorm.DB) error {
 				// employees
 				err := db.Table("employees").
 					Select(`
@@ -135,7 +137,8 @@ func main() {
 			ctx := c.Request.Context()
 			var emp *EmployeeInfo
 			var crew []EmployeeInfo
-			if err := dm.Exec(ctx, "oktedi", func(db *gorm.DB) error {
+			hostname := oktedicommon.GetHostname(c.Request.Host)
+			if err := dm.Exec(ctx, hostname, func(db *gorm.DB) error {
 
 				// employees
 				err := db.Table("employees").
@@ -217,7 +220,8 @@ func main() {
 			}
 			ctx := c.Request.Context()
 
-			if err := dm.Exec(ctx, "oktedi", func(db *gorm.DB) error {
+			hostname := oktedicommon.GetHostname(c.Request.Host)
+			if err := dm.Exec(ctx, hostname, func(db *gorm.DB) error {
 				return db.Transaction(func(tx *gorm.DB) error {
 					result := tx.Exec("UPDATE employees SET identificationTag = ? WHERE employeeid = ?", body.Tag, id)
 					if result.Error != nil {

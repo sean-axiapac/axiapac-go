@@ -7,6 +7,7 @@ import (
 
 	"axiapac.com/axiapac/core"
 	"axiapac.com/axiapac/oktedi/model"
+	oktedicommon "axiapac.com/axiapac/oktedi/web/common"
 	"axiapac.com/axiapac/utils"
 	"axiapac.com/axiapac/web/common"
 	"github.com/gin-gonic/gin"
@@ -30,9 +31,10 @@ func SearchSupervisorRecordsHandler(dm *core.DatabaseManager) gin.HandlerFunc {
 		var records []model.SupervisorRecord
 		// add supervisorid to route parameter
 		supervisorId := c.Param("supervisorId")
+		hostname := oktedicommon.GetHostname(c.Request.Host)
 		date := c.Query("date")
 		if date != "" {
-			if err := dm.Exec(c.Request.Context(), "oktedi", func(db *gorm.DB) error {
+			if err := dm.Exec(c.Request.Context(), hostname, func(db *gorm.DB) error {
 				return db.Where("date = ? AND supervisor_id = ?", date, supervisorId).Find(&records).Error
 			}); err != nil {
 				c.JSON(http.StatusInternalServerError, common.NewErrorResponse(err.Error()))
@@ -43,7 +45,7 @@ func SearchSupervisorRecordsHandler(dm *core.DatabaseManager) gin.HandlerFunc {
 		}
 
 		// if no date filter, return all records (limit to 1000)
-		if err := dm.Exec(c.Request.Context(), "oktedi", func(db *gorm.DB) error {
+		if err := dm.Exec(c.Request.Context(), hostname, func(db *gorm.DB) error {
 			return db.Limit(1000).Find(&records).Error
 		}); err != nil {
 			c.JSON(http.StatusInternalServerError, common.NewErrorResponse(err.Error()))
@@ -73,7 +75,8 @@ func SaveSupervisorRecordsHandler(dm *core.DatabaseManager) gin.HandlerFunc {
 			return
 		}
 
-		if err := dm.Exec(c.Request.Context(), "oktedi", func(db *gorm.DB) error {
+		hostname := oktedicommon.GetHostname(c.Request.Host)
+		if err := dm.Exec(c.Request.Context(), hostname, func(db *gorm.DB) error {
 			if err := BulkUpsert(db, supervisorId, data); err != nil {
 				return err
 			}

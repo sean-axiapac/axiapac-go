@@ -116,7 +116,9 @@ func BuildSearchQuery(db *gorm.DB, params SearchParams) *gorm.DB {
 		Where("t1.date BETWEEN ? AND ?", params.StartDate.Time.Format("2006-01-02"), params.EndDate.Time.Format("2006-01-02"))
 
 	if len(params.Projects) > 0 {
-		query = query.Where("t1.project_id IN ?", params.Projects)
+		// Match either the actual project on the timesheet or the employee's
+		// assigned project, so the Project search covers both columns.
+		query = query.Where("(t1.project_id IN ? OR e.jobid IN ?)", params.Projects, params.Projects)
 	}
 	if len(params.Supervisors) > 0 {
 		query = query.Where("e.ReportsToId IN ?", params.Supervisors)

@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	StartEarlyThreshold  = 15 * time.Minute
-	StartLateThreshold   = 10 * time.Minute
-	FinishEarlyThreshold = 10 * time.Minute
-	FinishLateThreshold  = 15 * time.Minute
+	StartEarlyThreshold  = 45 * time.Minute // within 45m before set start → use set start
+	StartLateThreshold   = 15 * time.Minute // within 15m after set start  → use set start
+	FinishEarlyThreshold = 15 * time.Minute // within 15m before set finish → use set finish
+	FinishLateThreshold  = 15 * time.Minute // within 15m after set finish  → use set finish
 )
 
 // AdjustTimesheetResult holds the adjusted times and any applied rules metadata if needed
@@ -138,25 +138,9 @@ func GetBreakMinutes(
 }
 
 func ApplyStartRule(actual, defined time.Time) time.Time {
-	// Rule: 15 min early or 10 min late -> use defined
+	// Snap to the set start time when actual is within the tolerance window:
+	// up to 45m before, or up to 15m after, the set start time.
 	diff := actual.Sub(defined) // negative if early
-
-	// Early: < -15 min? No, "15 min early ... use defined".
-	// Meaning if I arrive 07:45 for 08:00 start (15m early), use 08:00?
-	// The requirement: "if ... 15 min early or 10 min late ... use defined start time"
-	// This usually implies a window. "Within 15m early and 10m late"?
-	// Or "If > 15m early, use actual"?
-	// "if actual start time is 15 min early or 10 min late ... use defined"
-	// This usually means "If actual is WITHIN [Defined - 15m, Defined + 10m], snap to Defined".
-	// Let's verify interpretation.
-	// "15 min early" usually means "Time <= Defined - 15m".
-	// BUT, if I am *very* early (1 hour), I probably want to get paid? Or is this about rounding "close enough" times?
-	// "allowance". If I start at 7:50 (10m early), it snaps to 8:00.
-	// If I start at 8:05 (5m late), it snaps to 8:00.
-	// If I start at 7:30 (30m early), it stays 7:30?
-	// "if ... 15 min early ... use defined" logic usually works like a tolerance window.
-	// If Start >= Defined - 15m AND Start <= Defined + 10m -> Defined.
-	// Else -> Actual.
 
 	if diff >= -StartEarlyThreshold && diff <= StartLateThreshold {
 		return defined
@@ -165,8 +149,8 @@ func ApplyStartRule(actual, defined time.Time) time.Time {
 }
 
 func ApplyFinishRule(actual, defined time.Time) time.Time {
-	// Rule: 10 min early or 15 min late -> use defined
-	// Window: [Defined - 10m, Defined + 15m] -> Defined
+	// Snap to the set finish time when actual is within the tolerance window:
+	// up to 15m before, or up to 15m after, the set finish time.
 	diff := actual.Sub(defined)
 
 	if diff >= -FinishEarlyThreshold && diff <= FinishLateThreshold {

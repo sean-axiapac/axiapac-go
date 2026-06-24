@@ -22,18 +22,18 @@ func TestApplyStartRule(t *testing.T) {
 			expected: defined,
 		},
 		{
-			name:     "Early within threshold (15m)",
-			actual:   defined.Add(-15 * time.Minute),
+			name:     "Early within threshold (45m)",
+			actual:   defined.Add(-45 * time.Minute),
 			expected: defined,
 		},
 		{
-			name:     "Early within threshold (10m)",
-			actual:   defined.Add(-10 * time.Minute),
+			name:     "Early within threshold (30m)",
+			actual:   defined.Add(-30 * time.Minute),
 			expected: defined,
 		},
 		{
-			name:     "Late within threshold (10m)",
-			actual:   defined.Add(10 * time.Minute),
+			name:     "Late within threshold (15m)",
+			actual:   defined.Add(15 * time.Minute),
 			expected: defined,
 		},
 		{
@@ -42,14 +42,14 @@ func TestApplyStartRule(t *testing.T) {
 			expected: defined,
 		},
 		{
-			name:     "Early outside threshold (16m)",
-			actual:   defined.Add(-16 * time.Minute),
-			expected: defined.Add(-16 * time.Minute),
+			name:     "Early outside threshold (46m)",
+			actual:   defined.Add(-46 * time.Minute),
+			expected: defined.Add(-46 * time.Minute),
 		},
 		{
-			name:     "Late outside threshold (11m)",
-			actual:   defined.Add(11 * time.Minute),
-			expected: defined.Add(11 * time.Minute),
+			name:     "Late outside threshold (16m)",
+			actual:   defined.Add(16 * time.Minute),
+			expected: defined.Add(16 * time.Minute),
 		},
 	}
 
@@ -75,8 +75,8 @@ func TestApplyFinishRule(t *testing.T) {
 			expected: defined,
 		},
 		{
-			name:     "Early within threshold (10m)",
-			actual:   defined.Add(-10 * time.Minute),
+			name:     "Early within threshold (15m)",
+			actual:   defined.Add(-15 * time.Minute),
 			expected: defined,
 		},
 		{
@@ -85,9 +85,9 @@ func TestApplyFinishRule(t *testing.T) {
 			expected: defined,
 		},
 		{
-			name:     "Early outside threshold (11m)",
-			actual:   defined.Add(-11 * time.Minute),
-			expected: defined.Add(-11 * time.Minute),
+			name:     "Early outside threshold (16m)",
+			actual:   defined.Add(-16 * time.Minute),
+			expected: defined.Add(-16 * time.Minute),
 		},
 		{
 			name:     "Late outside threshold (16m)",

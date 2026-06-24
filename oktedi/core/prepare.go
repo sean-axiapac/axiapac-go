@@ -414,6 +414,8 @@ func persistTimesheets(db *gorm.DB, dateStr string, timesheetMap map[int32]model
 			ts.ID = existing.ID
 			ts.TimesheetID = existing.TimesheetID
 			ts.Approved = existing.Approved
+			ts.ProjectID = existing.ProjectID
+			ts.CostCentreID = existing.CostCentreID
 			if shouldPreserveAbsent(existing) {
 				continue
 			}
@@ -505,13 +507,23 @@ func updateReviewStatus(date time.Time, timesheetMap map[int32]model.OktediTimes
 			continue
 		}
 
-		// Not-rostered guard — highest priority
 		var timeType *models.PayrollTimeType
 		if emp.RosterPayrollTimeTypeID != 0 {
 			if tt, ok := refData.TimeTypeMap[emp.RosterPayrollTimeTypeID]; ok {
 				timeType = &tt
 			}
 		}
+
+		// Missing-roster guard — highest priority. A roster employee with an
+		// invalid setup can't be trusted by IsRosteredOn (it fails open), so flag it.
+		if isRoster, valid, reason := ValidateRoster(emp, timeType); isRoster && !valid {
+			fmt.Printf("Warning: employee %d roster misconfigured (%s) — marking missing-roster\n", empID, reason)
+			ts.ReviewStatus = "missing-roster"
+			timesheetMap[empID] = ts
+			continue
+		}
+
+		// Not-rostered guard
 		if !IsRosteredOn(emp, timeType, date) {
 			ts.ReviewStatus = "not-rostered"
 			timesheetMap[empID] = ts
@@ -586,6 +598,7 @@ func UpdateSingleReviewStatus(
 		ts.ReviewStatus = ""
 	}
 }
+
 // shouldPreserveAbsent returns true if an existing absent-tagged timesheet
 // should NOT be overwritten by re-prepare (i.e. a supervisor has already edited it).
 func shouldPreserveAbsent(existing model.OktediTimesheet) bool {
@@ -633,9 +646,6 @@ func injectAbsentRows(date time.Time, employees []models.Employee, opts PrepareO
 		if !matchesFilter(emp, opts) {
 			continue
 		}
-		if emp.RosterPayrollTimeTypeID == 0 {
-			continue
-		}
 		if !emp.EndDate.IsZero() && emp.EndDate.Before(endDateThreshold) {
 			continue
 		}
@@ -643,17 +653,34 @@ func injectAbsentRows(date time.Time, employees []models.Employee, opts PrepareO
 			continue
 		}
 		var timeType *models.PayrollTimeType
-		if tt, ok := refData.TimeTypeMap[emp.RosterPayrollTimeTypeID]; ok {
-			timeType = &tt
+		if emp.RosterPayrollTimeTypeID != 0 {
+			if tt, ok := refData.TimeTypeMap[emp.RosterPayrollTimeTypeID]; ok {
+				timeType = &tt
+			}
 		}
-		if !IsRosteredOn(emp, timeType, date) {
+
+		isRoster, valid, reason := ValidateRoster(emp, timeType)
+		// Absent rows are only for roster employees — skip non-roster staff.
+		if !isRoster {
 			continue
 		}
+
+		reviewStatus := "absent"
+		if !valid {
+			// Invalid roster setup — we can't trust IsRosteredOn (it fails open),
+			// so inject a flagged row instead of a spurious "absent" one.
+			fmt.Printf("Warning: employee %d roster misconfigured (%s) — injecting missing-roster row\n", emp.EmployeeID, reason)
+			reviewStatus = "missing-roster"
+		} else if !IsRosteredOn(emp, timeType, date) {
+			// Roster valid but not rostered on this date — skip, don't inject.
+			continue
+		}
+
 		ts := model.OktediTimesheet{
 			EmployeeID:   emp.EmployeeID,
 			Date:         date,
 			Hours:        0,
-			ReviewStatus: "absent",
+			ReviewStatus: reviewStatus,
 			Approved:     false,
 			Break:        GetBreakMinutes(date, emp, refData.EmpWorkHours, refData.RegionWorkHours),
 		}

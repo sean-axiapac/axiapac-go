@@ -124,8 +124,8 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 	})
 
 	t.Run("rostered ON, timesheet passes validation → empty status", func(t *testing.T) {
-		emp := makeEmp(4, 0) // no roster → always ON
-		emp.JobID = 0        // no job requirement → passes
+		emp := models.Employee{EmployeeID: 4} // no roster data at all → always ON
+		emp.JobID = 0                         // no job requirement → passes
 		ts := model.OktediTimesheet{EmployeeID: 4, Hours: 8, ReviewStatus: ""}
 		timesheetMap := map[int32]model.OktediTimesheet{4: ts}
 		refData := &ReferenceData{
@@ -142,7 +142,7 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 	})
 
 	t.Run("rostered ON, missing project → required", func(t *testing.T) {
-		emp := makeEmp(5, 0) // no roster → always ON
+		emp := models.Employee{EmployeeID: 5} // no roster data at all → always ON
 		emp.JobID = 99
 		ts := model.OktediTimesheet{EmployeeID: 5, Hours: 8, ProjectID: nil, ReviewStatus: ""}
 		timesheetMap := map[int32]model.OktediTimesheet{5: ts}
@@ -156,6 +156,28 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 		updateReviewStatus(testDate, timesheetMap, refData)
 
 		assert.Equal(t, "required", timesheetMap[5].ReviewStatus)
+	})
+
+	t.Run("roster misconfigured (time type missing) → Missing Roster", func(t *testing.T) {
+		emp := makeEmp(6, 99) // ttID 99 not in TimeTypeMap → timeType nil
+		ts := model.OktediTimesheet{EmployeeID: 6, Hours: 8, ReviewStatus: ""}
+		timesheetMap := map[int32]model.OktediTimesheet{6: ts}
+
+		updateReviewStatus(testDate, timesheetMap, makeRefData(emp))
+
+		assert.Equal(t, "missing-roster", timesheetMap[6].ReviewStatus)
+	})
+
+	t.Run("roster misconfigured wins over not-rostered", func(t *testing.T) {
+		// Start date set but no time type assigned → misconfigured, even though
+		// IsRosteredOn would fail open to always-on.
+		emp := models.Employee{EmployeeID: 7, RosterPayrollTimeTypeID: 0, RosterStartDate: rosterStart}
+		ts := model.OktediTimesheet{EmployeeID: 7, Hours: 8, ReviewStatus: "required"}
+		timesheetMap := map[int32]model.OktediTimesheet{7: ts}
+
+		updateReviewStatus(testDate, timesheetMap, makeRefData(emp))
+
+		assert.Equal(t, "missing-roster", timesheetMap[7].ReviewStatus)
 	})
 }
 
@@ -292,5 +314,19 @@ func TestInjectAbsentRows(t *testing.T) {
 
 		require.Contains(t, timesheetMap, int32(6), "emp under supervisor 50 should get absent row")
 		require.NotContains(t, timesheetMap, int32(7), "emp under supervisor 99 should be skipped")
+	})
+
+	t.Run("roster misconfigured (time type missing) → Missing Roster row, not absent", func(t *testing.T) {
+		// typeID 99 is assigned but not present in TimeTypeMap → timeType nil → misconfigured
+		emp := models.Employee{EmployeeID: 11, RosterPayrollTimeTypeID: 99, RosterStartDate: rosterStart}
+		timesheetMap := map[int32]model.OktediTimesheet{}
+		refData := baseRefData([]models.Employee{emp}, map[int32]models.PayrollTimeType{10: onRosterTT})
+
+		injectAbsentRows(testDate, refData.Employees, PrepareOptions{}, timesheetMap, refData)
+
+		require.Contains(t, timesheetMap, int32(11))
+		row := timesheetMap[11]
+		assert.Equal(t, "missing-roster", row.ReviewStatus)
+		assert.Equal(t, float64(0), row.Hours)
 	})
 }

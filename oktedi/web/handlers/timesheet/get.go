@@ -64,6 +64,7 @@ func (ep *Endpoint) Get(c *gin.Context) {
 		ReviewStatus: ts.ReviewStatus,
 		Approved:     ts.Approved,
 		Break:        ts.Break,
+		Overtime:     ts.Overtime,
 		TotalHours:   ts.Hours,
 		TimesheetID:  ts.TimesheetID,
 		Notes:        ts.Notes,

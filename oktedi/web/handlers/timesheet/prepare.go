@@ -36,10 +36,11 @@ func (ep *Endpoint) Prepare(c *gin.Context) {
 		Employees:   params.Employees,
 	}
 
-	if err := oktedi.Prepare(db, opts); err != nil {
+	summary, err := oktedi.Prepare(db, opts)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, web.NewSuccessResponse(gin.H{}))
+	c.JSON(http.StatusOK, web.NewSuccessResponse(summary))
 }

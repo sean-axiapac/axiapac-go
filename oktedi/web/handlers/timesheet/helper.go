@@ -41,12 +41,19 @@ type OktediTimesheetDTO struct {
 	ReviewStatus string        `json:"reviewStatus" gorm:"column:review_status"`
 	Approved     bool          `json:"approved" gorm:"column:approved"`
 	Break        *int32        `json:"break" gorm:"column:break"`
+	Overtime     float64       `json:"overtime" gorm:"column:overtime"`
 	TotalHours   float64       `json:"totalHours" gorm:"column:total_hours"`
 	Employee     EmployeeDTO   `json:"employee" gorm:"embedded;embeddedPrefix:employee_"`
 	Job          JobDTO        `json:"project" gorm:"embedded;embeddedPrefix:project_"`
 	CostCentre   CostCentreDTO `json:"costCentre" gorm:"embedded;embeddedPrefix:cost_centre_"`
 	TimesheetID  *int32        `json:"timesheetId"`
 	Notes        string        `json:"notes"`
+
+	// Derived (daily review) fields — not stored; populated by enrichReviewColumns.
+	RosteredHours *float64 `json:"rosteredHours" gorm:"-"` // assigned work-hours duration for the day
+	ClockOn       *string  `json:"clockOn" gorm:"-"`       // raw min clock-in (Brisbane), "YYYY-MM-DDTHH:MM:SS"
+	ClockOff      *string  `json:"clockOff" gorm:"-"`      // raw max clock-out (Brisbane)
+	Worked        *float64 `json:"worked" gorm:"-"`        // raw clocked span in hours
 }
 
 type ClockinRecordDTO struct {
@@ -104,6 +111,9 @@ type TimesheetCounts struct {
 	Approved    int64
 	NotApproved int64
 	Required    int64
+	// Per review_status row counts (e.g. "absent", "missing-roster",
+	// "not-rostered") for the status-specific tabs.
+	StatusCounts map[string]int64
 }
 
 func BuildSearchQuery(db *gorm.DB, params SearchParams) *gorm.DB {
@@ -238,8 +248,25 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 	if err := query.Session(&gorm.Session{}).Where("t1.approved = ?", false).Count(&counts.NotApproved).Error; err != nil {
 		return nil, counts, err
 	}
-	if err := query.Session(&gorm.Session{}).Where("t1.review_status = ?", "required").Count(&counts.Required).Error; err != nil {
+	if err := query.Session(&gorm.Session{}).Where("t1.review_status IN ?", []string{"required", "absent", "not-rostered"}).Count(&counts.Required).Error; err != nil {
 		return nil, counts, err
+	}
+
+	// Per-status counts in one GROUP BY for the status-specific tabs.
+	type statusCount struct {
+		ReviewStatus string `gorm:"column:review_status"`
+		Count        int64  `gorm:"column:count"`
+	}
+	var statusRows []statusCount
+	if err := query.Session(&gorm.Session{}).
+		Select("t1.review_status as review_status, COUNT(*) as count").
+		Group("t1.review_status").
+		Scan(&statusRows).Error; err != nil {
+		return nil, counts, err
+	}
+	counts.StatusCounts = make(map[string]int64, len(statusRows))
+	for _, r := range statusRows {
+		counts.StatusCounts[r.ReviewStatus] = r.Count
 	}
 
 	// fieldMap is duplicated logic here for sorts, maybe refactor later if needed
@@ -290,6 +317,8 @@ func SearchTimesheets(db *gorm.DB, params SearchParams, limit, offset int) ([]Ok
 	if err != nil {
 		return nil, counts, err
 	}
+
+	enrichReviewColumns(db, results)
 
 	return results, counts, nil
 }

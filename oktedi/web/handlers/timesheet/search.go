@@ -36,9 +36,10 @@ type SearchParams struct {
 
 type TimesheetSearchResponse struct {
 	web.SearchResponse
-	ApprovedCount    int64 `json:"approvedCount"`
-	NotApprovedCount int64 `json:"notApprovedCount"`
-	RequiredCount    int64 `json:"requiredCount"`
+	ApprovedCount    int64            `json:"approvedCount"`
+	NotApprovedCount int64            `json:"notApprovedCount"`
+	RequiredCount    int64            `json:"requiredCount"`
+	StatusCounts     map[string]int64 `json:"statusCounts"`
 }
 
 func (ep *Endpoint) Search(c *gin.Context) {
@@ -80,5 +81,6 @@ func (ep *Endpoint) Search(c *gin.Context) {
 		ApprovedCount:    counts.Approved,
 		NotApprovedCount: counts.NotApproved,
 		RequiredCount:    counts.Required,
+		StatusCounts:     counts.StatusCounts,
 	})
 }

@@ -19,14 +19,24 @@ type PrepareOptions struct {
 	Employees   []int32
 }
 
-func Prepare(db *gorm.DB, opts PrepareOptions) error {
+// PrepareSummary reports what a Prepare run did to the timesheet rows, so the
+// caller can reassure the user that approved work was preserved.
+type PrepareSummary struct {
+	New          int `json:"new"`          // rows created (no prior row existed)
+	Recomputed   int `json:"recomputed"`   // existing unapproved rows refreshed from the clock
+	KeptApproved int `json:"keptApproved"` // existing approved rows left untouched
+	KeptAbsent   int `json:"keptAbsent"`   // existing absent rows preserved
+}
+
+func Prepare(db *gorm.DB, opts PrepareOptions) (PrepareSummary, error) {
+	var summary PrepareSummary
 	// iterate through each day in the range
 	for d := opts.StartDate; !d.After(opts.EndDate); d = d.AddDate(0, 0, 1) {
-		if err := ProcessClockInRecordsWithFilters(db, d, opts); err != nil {
-			return err
+		if err := ProcessClockInRecordsWithFilters(db, d, opts, &summary); err != nil {
+			return summary, err
 		}
 	}
-	return nil
+	return summary, nil
 }
 
 type ReferenceData struct {
@@ -40,7 +50,7 @@ type ReferenceData struct {
 	TimeTypeMap     map[int32]models.PayrollTimeType
 }
 
-func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareOptions) error {
+func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareOptions, summary *PrepareSummary) error {
 	dateStr := date.Format("2006-01-02")
 
 	// 1. Fetch Reference Data
@@ -81,7 +91,7 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 	updateReviewStatus(date, timesheetMap, refData)
 
 	// 4. Persist to DB
-	if err := persistTimesheets(db, dateStr, timesheetMap); err != nil {
+	if err := persistTimesheets(db, dateStr, timesheetMap, summary); err != nil {
 		return err
 	}
 
@@ -387,7 +397,7 @@ func applySupervisorRecords(date time.Time, supervisorRecords []model.Supervisor
 	}
 }
 
-func persistTimesheets(db *gorm.DB, dateStr string, timesheetMap map[int32]model.OktediTimesheet) error {
+func persistTimesheets(db *gorm.DB, dateStr string, timesheetMap map[int32]model.OktediTimesheet, summary *PrepareSummary) error {
 	fmt.Printf("Saving %d timesheets to DB...\n", len(timesheetMap))
 	if len(timesheetMap) == 0 {
 		return nil
@@ -411,19 +421,31 @@ func persistTimesheets(db *gorm.DB, dateStr string, timesheetMap map[int32]model
 	var timesheets []model.OktediTimesheet
 	for _, ts := range timesheetMap {
 		if existing, exists := existingMap[ts.EmployeeID]; exists {
+			// Never overwrite a row that's already approved (manual or a prior
+			// auto-approve) — preserve the approval and any edits.
+			if existing.Approved {
+				if summary != nil {
+					summary.KeptApproved++
+				}
+				continue
+			}
 			ts.ID = existing.ID
 			ts.TimesheetID = existing.TimesheetID
-			ts.Approved = existing.Approved
 			ts.ProjectID = existing.ProjectID
 			ts.CostCentreID = existing.CostCentreID
 			if shouldPreserveAbsent(existing) {
+				if summary != nil {
+					summary.KeptAbsent++
+				}
 				continue
 			}
+			if summary != nil {
+				summary.Recomputed++
+			}
+		} else if summary != nil {
+			summary.New++
 		}
-		// don't save approved timesheets
-		if ts.Approved {
-			continue
-		}
+		// Save everything else, including rows just auto-approved this run.
 		timesheets = append(timesheets, ts)
 	}
 
@@ -535,7 +557,16 @@ func updateReviewStatus(date time.Time, timesheetMap map[int32]model.OktediTimes
 			continue
 		}
 
+		// Layer 1: normal review status.
 		UpdateSingleReviewStatus(&ts, emp, refData.EmpWorkHours, refData.RegionWorkHours)
+
+		// Auto-approve when the adjusted span matches the rostered span
+		// (Rostered == Adjusted). UpdateSingleReviewStatus leaves an empty
+		// ReviewStatus precisely in that matched case.
+		if ts.ReviewStatus == "" {
+			ts.Approved = true
+		}
+
 		timesheetMap[empID] = ts
 	}
 }

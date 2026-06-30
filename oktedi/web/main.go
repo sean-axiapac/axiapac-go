@@ -13,6 +13,7 @@ import (
 	"axiapac.com/axiapac/core"
 	oktedicommon "axiapac.com/axiapac/oktedi/web/common"
 	clockin "axiapac.com/axiapac/oktedi/web/handlers"
+	"axiapac.com/axiapac/oktedi/web/handlers/employee"
 	"axiapac.com/axiapac/oktedi/web/handlers/timesheet"
 	"axiapac.com/axiapac/web/common"
 	"axiapac.com/axiapac/web/handlers"
@@ -66,6 +67,7 @@ func main() {
 			})
 		})
 		timesheet.Register(protected, dm)
+		employee.Register(protected, dm)
 
 		protected.GET("/data", func(c *gin.Context) {
 			// result := ""

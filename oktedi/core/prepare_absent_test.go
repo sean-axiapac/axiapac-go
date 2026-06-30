@@ -123,9 +123,8 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 		assert.Equal(t, "absent", timesheetMap[3].ReviewStatus)
 	})
 
-	t.Run("rostered ON, timesheet passes validation → empty status", func(t *testing.T) {
-		emp := models.Employee{EmployeeID: 4} // no roster data at all → always ON
-		emp.JobID = 0                         // no job requirement → passes
+	t.Run("rostered ON, no assigned job → required", func(t *testing.T) {
+		emp := models.Employee{EmployeeID: 4} // no roster data → always ON, JobID 0
 		ts := model.OktediTimesheet{EmployeeID: 4, Hours: 8, ReviewStatus: ""}
 		timesheetMap := map[int32]model.OktediTimesheet{4: ts}
 		refData := &ReferenceData{
@@ -137,8 +136,27 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 
 		updateReviewStatus(testDate, timesheetMap, refData)
 
-		// No project assigned → required (UpdateSingleReviewStatus behaviour)
+		// No assigned job no longer gets special-cased — it's just a generic
+		// "required" row that the reviewer resolves.
 		assert.Equal(t, "required", timesheetMap[4].ReviewStatus)
+	})
+
+	t.Run("absent row with no assigned job → stays absent", func(t *testing.T) {
+		emp := models.Employee{EmployeeID: 10} // JobID 0
+		ts := model.OktediTimesheet{EmployeeID: 10, Hours: 0, ReviewStatus: "absent"}
+		timesheetMap := map[int32]model.OktediTimesheet{10: ts}
+		refData := &ReferenceData{
+			EmpMap:          map[int32]models.Employee{10: emp},
+			TimeTypeMap:     map[int32]models.PayrollTimeType{},
+			EmpWorkHours:    map[int32]map[int32]models.EmployeeWorkHour{},
+			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
+		}
+
+		updateReviewStatus(testDate, timesheetMap, refData)
+
+		// The absent guard runs early, so an absent row is preserved regardless
+		// of the employee's job assignment.
+		assert.Equal(t, "absent", timesheetMap[10].ReviewStatus)
 	})
 
 	t.Run("rostered ON, missing project → required", func(t *testing.T) {
@@ -178,6 +196,62 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 		updateReviewStatus(testDate, timesheetMap, makeRefData(emp))
 
 		assert.Equal(t, "missing-roster", timesheetMap[7].ReviewStatus)
+	})
+
+	t.Run("adjusted matches rostered → auto-approved", func(t *testing.T) {
+		start := time.Date(2026, 1, 10, 8, 0, 0, 0, time.UTC) // testDate, 08:00
+		dow := int32(start.Weekday())
+		emp := models.Employee{EmployeeID: 20, JobID: 7, CostCentreID: 3} // no roster → always ON
+		ts := model.OktediTimesheet{
+			EmployeeID:   20,
+			StartTime:    start,
+			Hours:        8, // break 0 → totalHours 8 == rostered span (08:00–16:00)
+			ProjectID:    utils.Ptr(int32(7)),
+			CostCentreID: utils.Ptr(int32(3)),
+			ReviewStatus: "",
+		}
+		timesheetMap := map[int32]model.OktediTimesheet{20: ts}
+		refData := &ReferenceData{
+			EmpMap:      map[int32]models.Employee{20: emp},
+			TimeTypeMap: map[int32]models.PayrollTimeType{},
+			EmpWorkHours: map[int32]map[int32]models.EmployeeWorkHour{
+				20: {dow: {Start: "08:00", Finish: "16:00"}},
+			},
+			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
+		}
+
+		updateReviewStatus(testDate, timesheetMap, refData)
+
+		assert.Equal(t, "", timesheetMap[20].ReviewStatus)
+		assert.True(t, timesheetMap[20].Approved, "matching timesheet should be auto-approved")
+	})
+
+	t.Run("adjusted differs from rostered → required, not approved", func(t *testing.T) {
+		start := time.Date(2026, 1, 10, 8, 0, 0, 0, time.UTC)
+		dow := int32(start.Weekday())
+		emp := models.Employee{EmployeeID: 21, JobID: 7, CostCentreID: 3}
+		ts := model.OktediTimesheet{
+			EmployeeID:   21,
+			StartTime:    start,
+			Hours:        6, // != rostered span 8
+			ProjectID:    utils.Ptr(int32(7)),
+			CostCentreID: utils.Ptr(int32(3)),
+			ReviewStatus: "",
+		}
+		timesheetMap := map[int32]model.OktediTimesheet{21: ts}
+		refData := &ReferenceData{
+			EmpMap:      map[int32]models.Employee{21: emp},
+			TimeTypeMap: map[int32]models.PayrollTimeType{},
+			EmpWorkHours: map[int32]map[int32]models.EmployeeWorkHour{
+				21: {dow: {Start: "08:00", Finish: "16:00"}},
+			},
+			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
+		}
+
+		updateReviewStatus(testDate, timesheetMap, refData)
+
+		assert.Equal(t, "required", timesheetMap[21].ReviewStatus)
+		assert.False(t, timesheetMap[21].Approved, "non-matching timesheet should not be auto-approved")
 	})
 }
 

@@ -36,6 +36,7 @@ type OktediTimesheetUpdateDTO struct {
 	ReviewStatus *string            `json:"reviewStatus,omitempty"`
 	Approved     *bool              `json:"approved,omitempty"`
 	Break        *int32             `json:"break,omitempty"`
+	Overtime     *float64           `json:"overtime,omitempty"`
 	ProjectID    *int32             `json:"projectId,omitempty"`
 	CostCentreID *int32             `json:"costCentreId,omitempty"`
 	Notes        *string            `json:"notes,omitempty"`
@@ -89,6 +90,9 @@ func (ep *Endpoint) Update(c *gin.Context) {
 	}
 	if updateDTO.Break != nil {
 		ts.Break = updateDTO.Break
+	}
+	if updateDTO.Overtime != nil {
+		ts.Overtime = *updateDTO.Overtime
 	}
 	if updateDTO.ProjectID != nil {
 		ts.ProjectID = updateDTO.ProjectID

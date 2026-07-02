@@ -50,10 +50,12 @@ type OktediTimesheetDTO struct {
 	Notes        string        `json:"notes"`
 
 	// Derived (daily review) fields — not stored; populated by enrichReviewColumns.
-	RosteredHours *float64 `json:"rosteredHours" gorm:"-"` // assigned work-hours duration for the day
-	ClockOn       *string  `json:"clockOn" gorm:"-"`       // raw min clock-in (Brisbane), "YYYY-MM-DDTHH:MM:SS"
-	ClockOff      *string  `json:"clockOff" gorm:"-"`      // raw max clock-out (Brisbane)
-	Worked        *float64 `json:"worked" gorm:"-"`        // raw clocked span in hours
+	RosteredHours  *float64 `json:"rosteredHours" gorm:"-"`  // assigned work-hours duration for the day
+	RosteredStart  *string  `json:"rosteredStart" gorm:"-"`  // defined start time-of-day, "HH:MM"
+	RosteredFinish *string  `json:"rosteredFinish" gorm:"-"` // defined finish time-of-day, "HH:MM"
+	ClockOn        *string  `json:"clockOn" gorm:"-"`        // raw min clock-in (Brisbane), "YYYY-MM-DDTHH:MM:SS"
+	ClockOff       *string  `json:"clockOff" gorm:"-"`       // raw max clock-out (Brisbane)
+	Worked         *float64 `json:"worked" gorm:"-"`         // raw clocked span in hours
 }
 
 type ClockinRecordDTO struct {

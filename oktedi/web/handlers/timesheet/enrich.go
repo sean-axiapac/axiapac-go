@@ -126,6 +126,10 @@ func enrichReviewColumns(db *gorm.DB, results []OktediTimesheetDTO) {
 				}
 				h := finish.Sub(start).Hours()
 				r.RosteredHours = &h
+				ss := start.Format("15:04")
+				fs := finish.Format("15:04")
+				r.RosteredStart = &ss
+				r.RosteredFinish = &fs
 			}
 		}
 

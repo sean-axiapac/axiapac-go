@@ -1,6 +1,7 @@
 package employee
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"axiapac.com/axiapac/core"
+	"axiapac.com/axiapac/core/models"
 	common "axiapac.com/axiapac/oktedi/web/common"
 	web "axiapac.com/axiapac/web/common"
 	"github.com/gin-gonic/gin"
@@ -21,6 +23,7 @@ type Endpoint struct {
 func Register(r *gin.RouterGroup, dm *core.DatabaseManager) {
 	endpoint := &Endpoint{base: common.Handler{Dm: dm}}
 	r.POST("/employees/search", endpoint.Search)
+	r.GET("/employees/:id", endpoint.Detail)
 }
 
 type Sort struct {
@@ -67,6 +70,23 @@ type EmployeeDTO struct {
 	RosterTimeTypeID      int32      `json:"rosterTimeTypeId" gorm:"column:roster_time_type_id"`
 	RosterTimeType        string     `json:"rosterTimeType" gorm:"column:roster_time_type"`
 	RosterStartDate       *time.Time `json:"rosterStartDate" gorm:"column:roster_start_date"`
+}
+
+// WorkHourDTO is one day's assigned work hours. DayOfWeek matches Go's
+// time.Weekday() (0=Sunday..6=Saturday); Break is in minutes.
+type WorkHourDTO struct {
+	DayOfWeek int32  `json:"dayOfWeek"`
+	Start     string `json:"start"`
+	Finish    string `json:"finish"`
+	Break     int32  `json:"break"`
+}
+
+// EmployeeDetailDTO is the single-employee view: the list row plus the assigned
+// work hours (resolved from region or personal hours per UseCalendarWorkHours).
+type EmployeeDetailDTO struct {
+	EmployeeDTO
+	UseCalendarWorkHours bool          `json:"useCalendarWorkHours"`
+	WorkHours            []WorkHourDTO `json:"workHours"`
 }
 
 // An employee is "rostered" when both a roster time type and a roster start
@@ -196,4 +216,95 @@ func (ep *Endpoint) Search(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, web.NewSearchResponse(results, total))
+}
+
+// Detail returns one employee (same joined row as Search) plus the assigned
+// work hours, for the HRM Employees info dialog.
+func (ep *Endpoint) Detail(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, web.NewErrorResponse("invalid employee id"))
+		return
+	}
+
+	db, conn, err := ep.base.GetDB(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+		return
+	}
+	defer conn.Close()
+
+	var dto EmployeeDTO
+	err = db.Table("Employees e").
+		Joins("LEFT JOIN jobs j ON j.jobid = e.JobId").
+		Joins("LEFT JOIN costcentres cc ON cc.costcentreid = e.CostCentreId").
+		Joins("LEFT JOIN PayrollTimeTypes tt ON tt.PayrollTimeTypeId = e.RosterPayrollTimeTypeId").
+		Select(`e.EmployeeId as id, e.Code as code, e.FirstName as first_name, e.Surname as surname,
+			e.JobId as job_id, j.JobNo as job_code, j.Description as job_description,
+			e.CostCentreId as cost_centre_id, cc.Code as cost_centre_code, cc.Description as cost_centre_description,
+			e.RosterPayrollTimeTypeId as roster_time_type_id, tt.Description as roster_time_type,
+			e.RosterStartDate as roster_start_date`).
+		Where("e.EmployeeId = ?", id).
+		Take(&dto).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, web.NewErrorResponse("employee not found"))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+		return
+	}
+
+	// The joined row doesn't carry the work-hours source flags, so load the
+	// model to resolve region vs personal hours.
+	var emp models.Employee
+	if err := db.Where("EmployeeId = ?", id).Take(&emp).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, web.NewErrorResponse(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, web.NewSuccessResponse(EmployeeDetailDTO{
+		EmployeeDTO:          dto,
+		UseCalendarWorkHours: emp.UseCalendarWorkHours,
+		WorkHours:            loadAssignedWorkHours(db, emp),
+	}))
+}
+
+// loadAssignedWorkHours returns the employee's assigned work hours for each
+// configured day (0=Sunday..6=Saturday, ordered). It mirrors GetDefinedWorkHours:
+// region/calendar hours when UseCalendarWorkHours is set, otherwise the
+// employee's personal hours.
+func loadAssignedWorkHours(db *gorm.DB, emp models.Employee) []WorkHourDTO {
+	out := make([]WorkHourDTO, 0, 7)
+
+	if emp.UseCalendarWorkHours {
+		if emp.CalendarRegionID == 0 {
+			return out
+		}
+		var rows []models.RegionWorkHour
+		db.Where("CalendarRegionId = ?", emp.CalendarRegionID).Find(&rows)
+		byDay := make(map[int32]models.RegionWorkHour, len(rows))
+		for _, r := range rows {
+			byDay[r.DayOfWeek] = r
+		}
+		for d := int32(0); d < 7; d++ {
+			if wh, ok := byDay[d]; ok {
+				out = append(out, WorkHourDTO{DayOfWeek: d, Start: wh.Start, Finish: wh.Finish, Break: wh.Break})
+			}
+		}
+		return out
+	}
+
+	var rows []models.EmployeeWorkHour
+	db.Where("EmployeeId = ?", emp.EmployeeID).Find(&rows)
+	byDay := make(map[int32]models.EmployeeWorkHour, len(rows))
+	for _, r := range rows {
+		byDay[r.DayOfWeek] = r
+	}
+	for d := int32(0); d < 7; d++ {
+		if wh, ok := byDay[d]; ok {
+			out = append(out, WorkHourDTO{DayOfWeek: d, Start: wh.Start, Finish: wh.Finish, Break: wh.Break})
+		}
+	}
+	return out
 }

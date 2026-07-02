@@ -8,7 +8,9 @@ import (
 )
 
 const (
-	StartEarlyThreshold  = 45 * time.Minute // within 45m before set start → use set start
+	// Any clock-in before the set start snaps to it (no early cap, so early
+	// arrivals never become morning overtime); a clock-in up to StartLateThreshold
+	// after the set start also snaps to it.
 	StartLateThreshold   = 15 * time.Minute // within 15m after set start  → use set start
 	FinishEarlyThreshold = 15 * time.Minute // within 15m before set finish → use set finish
 	FinishLateThreshold  = 15 * time.Minute // within 15m after set finish  → use set finish
@@ -138,11 +140,10 @@ func GetBreakMinutes(
 }
 
 func ApplyStartRule(actual, defined time.Time) time.Time {
-	// Snap to the set start time when actual is within the tolerance window:
-	// up to 45m before, or up to 15m after, the set start time.
-	diff := actual.Sub(defined) // negative if early
-
-	if diff >= -StartEarlyThreshold && diff <= StartLateThreshold {
+	// Any clock-in at or before the defined start — however early — counts as the
+	// defined start (no morning overtime). A clock-in up to StartLateThreshold after
+	// the defined start also snaps to it.
+	if actual.Sub(defined) <= StartLateThreshold {
 		return defined
 	}
 	return actual

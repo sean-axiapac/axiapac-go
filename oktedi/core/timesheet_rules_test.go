@@ -42,9 +42,9 @@ func TestApplyStartRule(t *testing.T) {
 			expected: defined,
 		},
 		{
-			name:     "Early outside threshold (46m)",
-			actual:   defined.Add(-46 * time.Minute),
-			expected: defined.Add(-46 * time.Minute),
+			name:     "Very early (3h) snaps to start (no early cap in v2)",
+			actual:   defined.Add(-3 * time.Hour),
+			expected: defined,
 		},
 		{
 			name:     "Late outside threshold (16m)",
@@ -154,8 +154,8 @@ func TestAdjustTimesheetHours(t *testing.T) {
 		assert.Equal(t, expectedFinish, res.FinishTime)
 	})
 
-	t.Run("Region Hours - Outside Threshold", func(t *testing.T) {
-		// Region Start 09:00. Arrive 08:00 (60m early) -> Use Actual 08:00
+	t.Run("Region Hours - Early start snaps to defined", func(t *testing.T) {
+		// Region Start 09:00. Arrive 08:00 (60m early) -> snap to 09:00 (no early cap in v2)
 		actualStart := time.Date(2023, 10, 23, 8, 0, 0, 0, time.UTC)
 		// Region Finish 17:00. Leave 17:05 (5m late) -> Use Defined 17:00
 		actualFinish := time.Date(2023, 10, 23, 17, 5, 0, 0, time.UTC)
@@ -163,7 +163,7 @@ func TestAdjustTimesheetHours(t *testing.T) {
 		res, err := AdjustTimesheetHours(actualStart, actualFinish, empRegion, empHours, regionHours)
 		assert.NoError(t, err)
 
-		expectedStart := actualStart                                     // 08:00 (outside 15m early threshold)
+		expectedStart := time.Date(2023, 10, 23, 9, 0, 0, 0, time.UTC)    // snap to 09:00
 		expectedFinish := time.Date(2023, 10, 23, 17, 0, 0, 0, time.UTC) // Snap to 17:00
 
 		assert.Equal(t, expectedStart, res.StartTime)

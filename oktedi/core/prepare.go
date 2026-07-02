@@ -84,6 +84,9 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 	// Step 3: Apply Snapping rules based on defined work hours
 	applySnappingRules(timesheetMap, refData)
 
+	// Step 3.5: Move work past the defined finish into Overtime
+	applyOvertime(timesheetMap, refData)
+
 	// Step 4: Deduct break time if applicable
 	applyBreaks(timesheetMap)
 
@@ -518,6 +521,44 @@ func applyBreaks(timesheetMap map[int32]model.OktediTimesheet) {
 				ts.Hours -= breakHours
 				timesheetMap[empID] = ts
 			}
+		}
+	}
+}
+
+// applyOvertime moves work past the defined finish into the Overtime field.
+// Overtime applies only when the (snapped) finish is beyond the finish-late
+// tolerance window (defined finish + FinishLateThreshold); the overtime hours are
+// measured from the defined finish itself. The excess is removed from ordinary
+// Hours so that paid span = Hours + Overtime (matching the web convention), which
+// also lets a pure-overtime day match its rostered hours and auto-approve.
+func applyOvertime(timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
+	for empID, ts := range timesheetMap {
+		if ts.ReviewStatus == "absent" {
+			continue
+		}
+		emp, ok := refData.EmpMap[empID]
+		if !ok {
+			continue
+		}
+		def, found := GetDefinedWorkHours(ts.StartTime, emp, refData.EmpWorkHours, refData.RegionWorkHours)
+		if !found {
+			continue
+		}
+		dateBase := time.Date(ts.StartTime.Year(), ts.StartTime.Month(), ts.StartTime.Day(), 0, 0, 0, 0, ts.StartTime.Location())
+		defStart, err1 := ParseTimeOnDate(dateBase, def.Start)
+		defFinish, err2 := ParseTimeOnDate(dateBase, def.Finish)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		if defFinish.Before(defStart) {
+			defFinish = defFinish.Add(24 * time.Hour)
+		}
+
+		if ts.FinishTime.After(defFinish.Add(FinishLateThreshold)) {
+			overtime := ts.FinishTime.Sub(defFinish).Hours()
+			ts.Overtime = overtime
+			ts.Hours = math.Max(0, ts.Hours-overtime)
+			timesheetMap[empID] = ts
 		}
 	}
 }

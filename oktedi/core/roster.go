@@ -1,10 +1,32 @@
 package core
 
 import (
+	"encoding/json"
+	"strconv"
 	"time"
 
 	"axiapac.com/axiapac/core/models"
 )
+
+// RosterPanel extracts the `rosterPanel` value from an employee's Attributes
+// JSON. Returns "" when Attributes is empty/invalid or the property is absent.
+// Accepts a string or numeric value.
+func RosterPanel(emp models.Employee) string {
+	if emp.Attributes == "" {
+		return ""
+	}
+	var attrs map[string]any
+	if json.Unmarshal([]byte(emp.Attributes), &attrs) != nil {
+		return ""
+	}
+	switch v := attrs["rosterPanel"].(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return ""
+}
 
 // ValidateRoster inspects an employee's roster data and reports three things:
 //
@@ -44,6 +66,37 @@ func ValidateRoster(emp models.Employee, timeType *models.PayrollTimeType) (isRo
 		return true, false, "roster cycle (days on/off) not configured"
 	}
 	return true, true, ""
+}
+
+// CurrentRosterPeriod returns the start and end dates (inclusive) of the on-or-off
+// stretch that `date` falls in, based on the employee's roster cycle: the current
+// ON period when rostered on, the current OFF period when rostered off. ok is
+// false when there's no valid roster cycle or the date precedes the roster start.
+func CurrentRosterPeriod(emp models.Employee, timeType *models.PayrollTimeType, date time.Time) (start, end time.Time, ok bool) {
+	if timeType == nil || emp.RosterPayrollTimeTypeID == 0 || emp.RosterStartDate.IsZero() {
+		return time.Time{}, time.Time{}, false
+	}
+	daysOn := int(timeType.RosteredDaysOn)
+	daysOff := int(timeType.RosteredDaysOff)
+	cycleLength := daysOn + daysOff
+	if cycleLength == 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	startDay := time.Date(emp.RosterStartDate.Year(), emp.RosterStartDate.Month(), emp.RosterStartDate.Day(), 0, 0, 0, 0, time.UTC)
+	targetDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	daysSinceStart := int(targetDay.Sub(startDay).Hours() / 24)
+	if daysSinceStart < 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	cyclePos := daysSinceStart % cycleLength
+	cycleStart := daysSinceStart - cyclePos // offset (days) of this cycle's first day
+	periodOffset, periodLen := cycleStart, daysOn
+	if cyclePos >= daysOn {
+		periodOffset, periodLen = cycleStart+daysOn, daysOff
+	}
+	start = startDay.AddDate(0, 0, periodOffset)
+	end = start.AddDate(0, 0, periodLen-1)
+	return start, end, true
 }
 
 // IsRosteredOn returns true if the employee is expected to work on the given date.

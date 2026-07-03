@@ -10,8 +10,10 @@ import (
 
 	"axiapac.com/axiapac/core"
 	"axiapac.com/axiapac/core/models"
+	oktedicore "axiapac.com/axiapac/oktedi/core"
 	common "axiapac.com/axiapac/oktedi/web/common"
 	web "axiapac.com/axiapac/web/common"
+	"axiapac.com/axiapac/utils"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -87,6 +89,15 @@ type EmployeeDetailDTO struct {
 	EmployeeDTO
 	UseCalendarWorkHours bool          `json:"useCalendarWorkHours"`
 	WorkHours            []WorkHourDTO `json:"workHours"`
+	// RosteredOn: whether the employee is rostered ON for the requested date
+	// (roster-cycle calc; false for non-roster or off-cycle). RosterPeriodStart/
+	// End: the current on-or-off stretch's date range ("2006-01-02"; "" when no
+	// roster cycle). RosterPanel: the `rosterPanel` value from the Attributes
+	// JSON ("" when absent/null).
+	RosteredOn        bool   `json:"rosteredOn"`
+	RosterPeriodStart string `json:"rosterPeriodStart"`
+	RosterPeriodEnd   string `json:"rosterPeriodEnd"`
+	RosterPanel       string `json:"rosterPanel"`
 }
 
 // An employee is "rostered" when both a roster time type and a roster start
@@ -263,10 +274,40 @@ func (ep *Endpoint) Detail(c *gin.Context) {
 		return
 	}
 
+	// Roster ON/OFF for the requested date (default today, optional ?date=).
+	date := utils.BrisbaneNow()
+	if q := c.Query("date"); q != "" {
+		if parsed, perr := time.ParseInLocation("2006-01-02", q, time.UTC); perr == nil {
+			date = parsed
+		}
+	}
+	var timeType *models.PayrollTimeType
+	if emp.RosterPayrollTimeTypeID != 0 {
+		var tt models.PayrollTimeType
+		if err := db.Where("PayrollTimeTypeId = ?", emp.RosterPayrollTimeTypeID).Take(&tt).Error; err == nil {
+			timeType = &tt
+		}
+	}
+	isRoster, valid, _ := oktedicore.ValidateRoster(emp, timeType)
+	rosteredOn := isRoster && valid && oktedicore.IsRosteredOn(emp, timeType, date)
+	periodStart, periodEnd := "", ""
+	if valid {
+		if ps, pe, ok := oktedicore.CurrentRosterPeriod(emp, timeType, date); ok {
+			periodStart = ps.Format("2006-01-02")
+			periodEnd = pe.Format("2006-01-02")
+		}
+	}
+
+	rosterPanel := oktedicore.RosterPanel(emp)
+
 	c.JSON(http.StatusOK, web.NewSuccessResponse(EmployeeDetailDTO{
 		EmployeeDTO:          dto,
 		UseCalendarWorkHours: emp.UseCalendarWorkHours,
 		WorkHours:            loadAssignedWorkHours(db, emp),
+		RosteredOn:           rosteredOn,
+		RosterPeriodStart:    periodStart,
+		RosterPeriodEnd:      periodEnd,
+		RosterPanel:          rosterPanel,
 	}))
 }
 

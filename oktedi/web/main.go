@@ -16,6 +16,7 @@ import (
 	"axiapac.com/axiapac/oktedi/web/handlers/dashboard"
 	"axiapac.com/axiapac/oktedi/web/handlers/employee"
 	"axiapac.com/axiapac/oktedi/web/handlers/timesheet"
+	"axiapac.com/axiapac/oktedi/web/handlers/whoami"
 	"axiapac.com/axiapac/web/common"
 	"axiapac.com/axiapac/web/handlers"
 	"axiapac.com/axiapac/web/middlewares"
@@ -70,6 +71,7 @@ func main() {
 		timesheet.Register(protected, dm)
 		employee.Register(protected, dm)
 		dashboard.Register(protected, dm)
+		whoami.Register(protected, dm)
 
 		protected.GET("/data", func(c *gin.Context) {
 			// result := ""

@@ -44,6 +44,8 @@ type AttendanceRow struct {
 	// Absent-only streaks (nil when the employee is not absent on the date).
 	ConsecutiveDaysAbsent *int `json:"consecutiveDaysAbsent"`
 	TotalAbsentDays       *int `json:"totalAbsentDays"`
+	// Panel: `rosterPanel` from the employee's Attributes JSON ("" when absent).
+	Panel string `json:"panel"`
 }
 
 // AttendanceResult is the full payload for the dashboard: the per-employee rows
@@ -285,6 +287,7 @@ func buildRow(emp models.Employee, refData *attendanceRefData) AttendanceRow {
 		FirstName:  emp.FirstName,
 		Surname:    emp.Surname,
 		ProjectID:  emp.JobID,
+		Panel:      RosterPanel(emp),
 	}
 	if job, ok := refData.jobByID[emp.JobID]; ok {
 		row.ProjectCode = job.JobNo

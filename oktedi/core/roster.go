@@ -1,8 +1,6 @@
 package core
 
 import (
-	"encoding/json"
-	"strconv"
 	"time"
 
 	"axiapac.com/axiapac/core/models"
@@ -12,20 +10,7 @@ import (
 // JSON. Returns "" when Attributes is empty/invalid or the property is absent.
 // Accepts a string or numeric value.
 func RosterPanel(emp models.Employee) string {
-	if emp.Attributes == "" {
-		return ""
-	}
-	var attrs map[string]any
-	if json.Unmarshal([]byte(emp.Attributes), &attrs) != nil {
-		return ""
-	}
-	switch v := attrs["rosterPanel"].(type) {
-	case string:
-		return v
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	}
-	return ""
+	return AttrString(ParseAttributes(emp), "rosterPanel")
 }
 
 // ValidateRoster inspects an employee's roster data and reports three things:

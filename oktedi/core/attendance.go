@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strings"
 	"time"
 
 	"axiapac.com/axiapac/core/models"
@@ -46,6 +47,15 @@ type AttendanceRow struct {
 	TotalAbsentDays       *int `json:"totalAbsentDays"`
 	// Panel: `rosterPanel` from the employee's Attributes JSON ("" when absent).
 	Panel string `json:"panel"`
+	// Evacuation-register fields. Employer resolves the Attributes `employer.id`
+	// reference to the supplier name; Department joins the Attributes
+	// `businessUnit` and `department` values (e.g. "Projects BU FIFO Village");
+	// Area is the Attributes `area` value (not yet populated in current data);
+	// Classification is the employee's Occupation description.
+	Employer       string `json:"employer"`
+	Department     string `json:"department"`
+	Area           string `json:"area"`
+	Classification string `json:"classification"`
 }
 
 // AttendanceResult is the full payload for the dashboard: the per-employee rows
@@ -105,6 +115,8 @@ type attendanceRefData struct {
 	jobByID         map[int32]models.Job
 	empWorkHours    map[int32]map[int32]models.EmployeeWorkHour
 	regionWorkHours map[int32]map[int32]models.RegionWorkHour
+	supplierNames   map[int32]string // employer resolution (Attributes employer.id)
+	occupationDescs map[int32]string // classification (Employees.OccupationId)
 }
 
 func loadAttendanceRefData(db *gorm.DB) (*attendanceRefData, error) {
@@ -154,12 +166,33 @@ func loadAttendanceRefData(db *gorm.DB) (*attendanceRefData, error) {
 		regionWHMap[wh.CalendarRegionID][wh.DayOfWeek] = wh
 	}
 
+	// Suppliers (employer names) and occupations (classification) for the
+	// evacuation-register fields.
+	var suppliers []models.Supplier
+	if err := db.Find(&suppliers).Error; err != nil {
+		return nil, err
+	}
+	supplierNames := make(map[int32]string, len(suppliers))
+	for _, s := range suppliers {
+		supplierNames[s.SupplierID] = s.Name
+	}
+	var occupations []models.Occupation
+	if err := db.Find(&occupations).Error; err != nil {
+		return nil, err
+	}
+	occupationDescs := make(map[int32]string, len(occupations))
+	for _, o := range occupations {
+		occupationDescs[o.OccupationID] = o.Description
+	}
+
 	return &attendanceRefData{
 		employees:       employees,
 		timeTypeMap:     ttMap,
 		jobByID:         jobByID,
 		empWorkHours:    empWHMap,
 		regionWorkHours: regionWHMap,
+		supplierNames:   supplierNames,
+		occupationDescs: occupationDescs,
 	}, nil
 }
 
@@ -281,13 +314,18 @@ func LoadAttendance(db *gorm.DB, date time.Time, now time.Time) (*AttendanceResu
 }
 
 func buildRow(emp models.Employee, refData *attendanceRefData) AttendanceRow {
+	attrs := ParseAttributes(emp)
 	row := AttendanceRow{
-		EmployeeID: emp.EmployeeID,
-		Code:       emp.Code,
-		FirstName:  emp.FirstName,
-		Surname:    emp.Surname,
-		ProjectID:  emp.JobID,
-		Panel:      RosterPanel(emp),
+		EmployeeID:     emp.EmployeeID,
+		Code:           emp.Code,
+		FirstName:      emp.FirstName,
+		Surname:        emp.Surname,
+		ProjectID:      emp.JobID,
+		Panel:          AttrString(attrs, "rosterPanel"),
+		Employer:       refData.supplierNames[AttrRefID(attrs, "employer")],
+		Department:     strings.TrimSpace(AttrString(attrs, "businessUnit") + " " + AttrString(attrs, "department")),
+		Area:           AttrString(attrs, "area"),
+		Classification: refData.occupationDescs[emp.OccupationID],
 	}
 	if job, ok := refData.jobByID[emp.JobID]; ok {
 		row.ProjectCode = job.JobNo

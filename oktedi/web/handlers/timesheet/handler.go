@@ -118,8 +118,13 @@ func (ep *Endpoint) Update(c *gin.Context) {
 		return
 	}
 
+	// Creating the Axiapac timesheet on approve is disabled for now, until the
+	// sync process is finalised. Flip this back to true to re-enable — the block
+	// below (build client + SyncOktediTimesheet) is otherwise unchanged.
+	const syncToAxiapacOnApprove = false
+
 	// Trigger sync only if it's currently approved AND it was previously not approved
-	if ts.Approved && !wasApproved {
+	if syncToAxiapacOnApprove && ts.Approved && !wasApproved {
 		// Get logged in user id from claims
 		claims, exists := c.Get("claims")
 		if !exists {

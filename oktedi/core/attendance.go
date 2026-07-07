@@ -47,6 +47,9 @@ type AttendanceRow struct {
 	TotalAbsentDays       *int `json:"totalAbsentDays"`
 	// Panel: `rosterPanel` from the employee's Attributes JSON ("" when absent).
 	Panel string `json:"panel"`
+	// DeviceID is the device of the clock-in record ("" when the employee has no
+	// records on the date). The evacuation register maps it to a physical area.
+	DeviceID string `json:"deviceId"`
 	// Evacuation-register fields. Employer resolves the Attributes `employer.id`
 	// reference to the supplier name; Department joins the Attributes
 	// `businessUnit` and `department` values (e.g. "Projects BU FIFO Village");
@@ -291,6 +294,7 @@ func LoadAttendance(db *gorm.DB, date time.Time, now time.Time) (*AttendanceResu
 		if hasRecords {
 			row.RecordCount = len(group.Records)
 			row.ClockOn = formatBrisbaneClock(group.GetClockIn())
+			row.DeviceID = group.GetDeviceID()
 			if row.RecordCount >= 2 {
 				row.ClockOff = formatBrisbaneClock(group.GetClockOut())
 			}

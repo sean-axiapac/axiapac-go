@@ -27,6 +27,16 @@ func (rg *RecordGroup) GetClockOut() string {
 	return rg.Records[len(rg.Records)-1].Timestamp
 }
 
+// GetDeviceID returns the device the clock-in (earliest) record came from, ""
+// when the group is empty. Used by the evacuation register to resolve the area
+// an employee signed in at.
+func (rg *RecordGroup) GetDeviceID() string {
+	if len(rg.Records) == 0 {
+		return ""
+	}
+	return rg.Records[0].DeviceID
+}
+
 func GroupRecords(records []*model.ClockinRecord) []*RecordGroup {
 	// group by date - although we are processing single date, the util is generic
 	var groups []*RecordGroup

@@ -123,6 +123,8 @@ type attendanceRefData struct {
 }
 
 func loadAttendanceRefData(db *gorm.DB) (*attendanceRefData, error) {
+	// Load ALL employees so clock-in records for anyone (active or not) still map
+	// to an employee. Active-only gating happens in the roster pass below.
 	var employees []models.Employee
 	if err := db.Find(&employees).Error; err != nil {
 		return nil, err
@@ -258,7 +260,6 @@ func LoadAttendance(db *gorm.DB, date time.Time, now time.Time) (*AttendanceResu
 		reviewByEmp[ts.EmployeeID] = ts.ReviewStatus
 	}
 
-	endDateThreshold := date.AddDate(0, 0, -7)
 	rows := make([]AttendanceRow, 0, len(refData.employees))
 	seenTags := make(map[string]bool)
 
@@ -266,12 +267,6 @@ func LoadAttendance(db *gorm.DB, date time.Time, now time.Time) (*AttendanceResu
 	// roster/non-roster employees who clocked in.
 	var absentEmps []models.Employee
 	for _, emp := range refData.employees {
-		// Skip staff terminated more than the 7-day grace before the date
-		// (mirrors the prepare flow's absent-row guard).
-		if !emp.EndDate.IsZero() && emp.EndDate.Before(endDateThreshold) {
-			continue
-		}
-
 		group := groupByTag[emp.IdentificationTag]
 		hasRecords := group != nil && emp.IdentificationTag != ""
 		if hasRecords {
@@ -279,11 +274,15 @@ func LoadAttendance(db *gorm.DB, date time.Time, now time.Time) (*AttendanceResu
 		}
 
 		timeType := refData.timeTypeFor(emp)
-		isRoster, valid, _ := ValidateRoster(emp, timeType)
-		rosteredOn := isRoster && valid && IsRosteredOn(emp, timeType, date)
+		active := ActiveEmployee(emp, date)
+		class := ClassifyRoster(emp, timeType, date)
+		rosteredOn := class == RosterOnCycle
 
-		// Not scheduled and didn't clock in → not on this day's dashboard.
-		if !rosteredOn && !hasRecords {
+		// Show worked employees always. For no clock-in, show only active staff
+		// who are rostered-on (→ Absent) or roster-misconfigured (→ Not Rostered),
+		// mirroring the daily review. No-show non-roster/off-cycle/terminated
+		// employees are ignored (they aren't prepared as timesheets either).
+		if !hasRecords && !(active && (class == RosterOnCycle || class == RosterMissing)) {
 			continue
 		}
 

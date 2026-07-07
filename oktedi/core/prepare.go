@@ -107,6 +107,9 @@ func ProcessClockInRecordsWithFilters(db *gorm.DB, date time.Time, opts PrepareO
 
 func fetchReferenceData(db *gorm.DB) (*ReferenceData, error) {
 	fmt.Println("Fetching reference data...")
+	// Load ALL employees: the tag->employee map must resolve clock-in records for
+	// anyone who worked, active or not. Active-only gating happens later, at the
+	// proactive-row decision point (injectAbsentRows).
 	var employees []models.Employee
 	if err := db.Find(&employees).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch employees: %w", err)
@@ -577,17 +580,15 @@ func updateReviewStatus(date time.Time, timesheetMap map[int32]model.OktediTimes
 			}
 		}
 
-		// Missing-roster guard — highest priority. A roster employee with an
-		// invalid setup can't be trusted by IsRosteredOn (it fails open), so flag it.
-		if isRoster, valid, reason := ValidateRoster(emp, timeType); isRoster && !valid {
-			fmt.Printf("Warning: employee %d roster misconfigured (%s) — marking missing-roster\n", empID, reason)
+		// Roster classification — shared with the dashboard so missing-roster +
+		// not-rostered here equals the dashboard's Not Rostered card. NotRostered
+		// covers non-roster, off-cycle, and terminated/inactive employees.
+		switch ClassifyRoster(emp, timeType, date) {
+		case RosterMissing:
 			ts.ReviewStatus = "missing-roster"
 			timesheetMap[empID] = ts
 			continue
-		}
-
-		// Not-rostered guard
-		if !IsRosteredOn(emp, timeType, date) {
+		case RosterNotRostered:
 			ts.ReviewStatus = "not-rostered"
 			timesheetMap[empID] = ts
 			continue
@@ -713,12 +714,13 @@ func matchesFilter(emp models.Employee, opts PrepareOptions) bool {
 }
 
 func injectAbsentRows(date time.Time, employees []models.Employee, opts PrepareOptions, timesheetMap map[int32]model.OktediTimesheet, refData *ReferenceData) {
-	endDateThreshold := date.AddDate(0, 0, -7)
 	for _, emp := range employees {
 		if !matchesFilter(emp, opts) {
 			continue
 		}
-		if !emp.EndDate.IsZero() && emp.EndDate.Before(endDateThreshold) {
+		// Only active staff get proactive absent rows. Clock-in records for
+		// non-active employees are still attributed in processClockInRecords.
+		if !ActiveEmployee(emp, date) {
 			continue
 		}
 		if _, exists := timesheetMap[emp.EmployeeID]; exists {

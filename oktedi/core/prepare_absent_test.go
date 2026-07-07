@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"axiapac.com/axiapac/axiapac/v1/common/eraid"
 	"axiapac.com/axiapac/core/models"
 	"axiapac.com/axiapac/oktedi/model"
 	"axiapac.com/axiapac/utils"
@@ -18,12 +19,21 @@ var (
 
 func baseRefData(employees []models.Employee, ttMap map[int32]models.PayrollTimeType) *ReferenceData {
 	empMap := make(map[int32]models.Employee)
-	for _, e := range employees {
-		empMap[e.EmployeeID] = e
+	tagMap := make(map[string]models.Employee)
+	for i := range employees {
+		// Test employees are active unless a test sets EraID/EndDate explicitly.
+		if employees[i].EraID == 0 {
+			employees[i].EraID = int32(eraid.Present)
+		}
+		empMap[employees[i].EmployeeID] = employees[i]
+		if employees[i].IdentificationTag != "" {
+			tagMap[employees[i].IdentificationTag] = employees[i]
+		}
 	}
 	return &ReferenceData{
 		Employees:       employees,
 		EmpMap:          empMap,
+		TagMap:          tagMap,
 		TimeTypeMap:     ttMap,
 		EmpWorkHours:    map[int32]map[int32]models.EmployeeWorkHour{},
 		RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
@@ -81,8 +91,12 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 	// testDate = Jan 10 = day 5 from Jan 5 → OFF for 5/2
 	// rosterOnDate = Jan 9 = day 4 from Jan 5 → ON for 5/2
 
+	// Active roster employee (unless a test overrides EraID/EndDate/roster).
 	makeEmp := func(id int32, ttID int32) models.Employee {
-		return models.Employee{EmployeeID: id, RosterPayrollTimeTypeID: ttID, RosterStartDate: rosterStart}
+		return models.Employee{
+			EmployeeID: id, RosterPayrollTimeTypeID: ttID, RosterStartDate: rosterStart,
+			EraID: int32(eraid.Present),
+		}
 	}
 	makeRefData := func(emp models.Employee) *ReferenceData {
 		return &ReferenceData{
@@ -123,55 +137,70 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 		assert.Equal(t, "absent", timesheetMap[3].ReviewStatus)
 	})
 
-	t.Run("rostered ON, no assigned job → required", func(t *testing.T) {
-		emp := models.Employee{EmployeeID: 4} // no roster data → always ON, JobID 0
-		ts := model.OktediTimesheet{EmployeeID: 4, Hours: 8, ReviewStatus: ""}
-		timesheetMap := map[int32]model.OktediTimesheet{4: ts}
+	// on-cycle keys EmpWorkHours by the rosterOnDate weekday.
+	onCycleStart := time.Date(2026, 1, 9, 8, 0, 0, 0, time.UTC) // rosterOnDate, 08:00
+	onCycleDow := int32(onCycleStart.Weekday())
+
+	t.Run("non-roster clock-in → not-rostered", func(t *testing.T) {
+		emp := models.Employee{EmployeeID: 40, EraID: int32(eraid.Present)} // no roster config
+		ts := model.OktediTimesheet{EmployeeID: 40, Hours: 8, ReviewStatus: ""}
+		timesheetMap := map[int32]model.OktediTimesheet{40: ts}
 		refData := &ReferenceData{
-			EmpMap:          map[int32]models.Employee{4: emp},
+			EmpMap:          map[int32]models.Employee{40: emp},
 			TimeTypeMap:     map[int32]models.PayrollTimeType{},
 			EmpWorkHours:    map[int32]map[int32]models.EmployeeWorkHour{},
 			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
 		}
 
 		updateReviewStatus(testDate, timesheetMap, refData)
+
+		// Matches the dashboard: a non-roster employee who clocks in is Not Rostered.
+		assert.Equal(t, "not-rostered", timesheetMap[40].ReviewStatus)
+	})
+
+	t.Run("terminated clock-in (on-cycle) → not-rostered", func(t *testing.T) {
+		emp := makeEmp(41, 10)
+		emp.EndDate = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) // terminated before the date
+		ts := model.OktediTimesheet{EmployeeID: 41, Hours: 8, ReviewStatus: ""}
+		timesheetMap := map[int32]model.OktediTimesheet{41: ts}
+
+		updateReviewStatus(rosterOnDate, timesheetMap, makeRefData(emp))
+
+		// Matches the dashboard's ActiveEmployee gate: terminated → Not Rostered.
+		assert.Equal(t, "not-rostered", timesheetMap[41].ReviewStatus)
+	})
+
+	t.Run("rostered ON, no assigned job → required", func(t *testing.T) {
+		emp := makeEmp(4, 10) // active, on-cycle roster; JobID 0
+		ts := model.OktediTimesheet{EmployeeID: 4, Hours: 8, ReviewStatus: ""}
+		timesheetMap := map[int32]model.OktediTimesheet{4: ts}
+
+		updateReviewStatus(rosterOnDate, timesheetMap, makeRefData(emp))
 
 		// No assigned job no longer gets special-cased — it's just a generic
 		// "required" row that the reviewer resolves.
 		assert.Equal(t, "required", timesheetMap[4].ReviewStatus)
 	})
 
-	t.Run("absent row with no assigned job → stays absent", func(t *testing.T) {
-		emp := models.Employee{EmployeeID: 10} // JobID 0
+	t.Run("absent row → stays absent regardless of job", func(t *testing.T) {
+		emp := makeEmp(10, 10) // active, on-cycle roster; JobID 0
 		ts := model.OktediTimesheet{EmployeeID: 10, Hours: 0, ReviewStatus: "absent"}
 		timesheetMap := map[int32]model.OktediTimesheet{10: ts}
-		refData := &ReferenceData{
-			EmpMap:          map[int32]models.Employee{10: emp},
-			TimeTypeMap:     map[int32]models.PayrollTimeType{},
-			EmpWorkHours:    map[int32]map[int32]models.EmployeeWorkHour{},
-			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
-		}
 
-		updateReviewStatus(testDate, timesheetMap, refData)
+		updateReviewStatus(rosterOnDate, timesheetMap, makeRefData(emp))
 
-		// The absent guard runs early, so an absent row is preserved regardless
-		// of the employee's job assignment.
+		// The absent guard runs after the roster classification but only for
+		// on-cycle rows, so a genuine absent row is preserved.
 		assert.Equal(t, "absent", timesheetMap[10].ReviewStatus)
 	})
 
 	t.Run("rostered ON, missing project → required", func(t *testing.T) {
-		emp := models.Employee{EmployeeID: 5} // no roster data at all → always ON
+		emp := makeEmp(5, 10) // active, on-cycle roster
 		emp.JobID = 99
 		ts := model.OktediTimesheet{EmployeeID: 5, Hours: 8, ProjectID: nil, ReviewStatus: ""}
 		timesheetMap := map[int32]model.OktediTimesheet{5: ts}
-		refData := &ReferenceData{
-			EmpMap:          map[int32]models.Employee{5: emp},
-			TimeTypeMap:     map[int32]models.PayrollTimeType{},
-			EmpWorkHours:    map[int32]map[int32]models.EmployeeWorkHour{},
-			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
-		}
 
-		updateReviewStatus(testDate, timesheetMap, refData)
+		updateReviewStatus(rosterOnDate, timesheetMap, makeRefData(emp))
 
 		assert.Equal(t, "required", timesheetMap[5].ReviewStatus)
 	})
@@ -189,7 +218,7 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 	t.Run("roster misconfigured wins over not-rostered", func(t *testing.T) {
 		// Start date set but no time type assigned → misconfigured, even though
 		// IsRosteredOn would fail open to always-on.
-		emp := models.Employee{EmployeeID: 7, RosterPayrollTimeTypeID: 0, RosterStartDate: rosterStart}
+		emp := models.Employee{EmployeeID: 7, RosterPayrollTimeTypeID: 0, RosterStartDate: rosterStart, EraID: int32(eraid.Present)}
 		ts := model.OktediTimesheet{EmployeeID: 7, Hours: 8, ReviewStatus: "required"}
 		timesheetMap := map[int32]model.OktediTimesheet{7: ts}
 
@@ -199,56 +228,48 @@ func TestUpdateReviewStatusRosterGuard(t *testing.T) {
 	})
 
 	t.Run("adjusted matches rostered → auto-approved", func(t *testing.T) {
-		start := time.Date(2026, 1, 10, 8, 0, 0, 0, time.UTC) // testDate, 08:00
-		dow := int32(start.Weekday())
-		emp := models.Employee{EmployeeID: 20, JobID: 7, CostCentreID: 3} // no roster → always ON
+		emp := makeEmp(20, 10) // active, on-cycle roster
+		emp.JobID = 7
+		emp.CostCentreID = 3
 		ts := model.OktediTimesheet{
 			EmployeeID:   20,
-			StartTime:    start,
+			StartTime:    onCycleStart,
 			Hours:        8, // break 0 → totalHours 8 == rostered span (08:00–16:00)
 			ProjectID:    utils.Ptr(int32(7)),
 			CostCentreID: utils.Ptr(int32(3)),
 			ReviewStatus: "",
 		}
 		timesheetMap := map[int32]model.OktediTimesheet{20: ts}
-		refData := &ReferenceData{
-			EmpMap:      map[int32]models.Employee{20: emp},
-			TimeTypeMap: map[int32]models.PayrollTimeType{},
-			EmpWorkHours: map[int32]map[int32]models.EmployeeWorkHour{
-				20: {dow: {Start: "08:00", Finish: "16:00"}},
-			},
-			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
+		refData := makeRefData(emp)
+		refData.EmpWorkHours = map[int32]map[int32]models.EmployeeWorkHour{
+			20: {onCycleDow: {Start: "08:00", Finish: "16:00"}},
 		}
 
-		updateReviewStatus(testDate, timesheetMap, refData)
+		updateReviewStatus(rosterOnDate, timesheetMap, refData)
 
 		assert.Equal(t, "", timesheetMap[20].ReviewStatus)
 		assert.True(t, timesheetMap[20].Approved, "matching timesheet should be auto-approved")
 	})
 
 	t.Run("adjusted differs from rostered → required, not approved", func(t *testing.T) {
-		start := time.Date(2026, 1, 10, 8, 0, 0, 0, time.UTC)
-		dow := int32(start.Weekday())
-		emp := models.Employee{EmployeeID: 21, JobID: 7, CostCentreID: 3}
+		emp := makeEmp(21, 10) // active, on-cycle roster
+		emp.JobID = 7
+		emp.CostCentreID = 3
 		ts := model.OktediTimesheet{
 			EmployeeID:   21,
-			StartTime:    start,
+			StartTime:    onCycleStart,
 			Hours:        6, // != rostered span 8
 			ProjectID:    utils.Ptr(int32(7)),
 			CostCentreID: utils.Ptr(int32(3)),
 			ReviewStatus: "",
 		}
 		timesheetMap := map[int32]model.OktediTimesheet{21: ts}
-		refData := &ReferenceData{
-			EmpMap:      map[int32]models.Employee{21: emp},
-			TimeTypeMap: map[int32]models.PayrollTimeType{},
-			EmpWorkHours: map[int32]map[int32]models.EmployeeWorkHour{
-				21: {dow: {Start: "08:00", Finish: "16:00"}},
-			},
-			RegionWorkHours: map[int32]map[int32]models.RegionWorkHour{},
+		refData := makeRefData(emp)
+		refData.EmpWorkHours = map[int32]map[int32]models.EmployeeWorkHour{
+			21: {onCycleDow: {Start: "08:00", Finish: "16:00"}},
 		}
 
-		updateReviewStatus(testDate, timesheetMap, refData)
+		updateReviewStatus(rosterOnDate, timesheetMap, refData)
 
 		assert.Equal(t, "required", timesheetMap[21].ReviewStatus)
 		assert.False(t, timesheetMap[21].Approved, "non-matching timesheet should not be auto-approved")
@@ -312,39 +333,35 @@ func TestInjectAbsentRows(t *testing.T) {
 		require.NotContains(t, timesheetMap, int32(4))
 	})
 
-	t.Run("emp with EndDate older than date-7d → skipped", func(t *testing.T) {
-		start := time.Date(2026, 1, 6, 0, 0, 0, 0, time.UTC)
-		// testDate is 2026-01-10; threshold = 2026-01-03; emp ended 2026-01-02 → skip
+	// Termination/era filtering is now applied by the ActiveEmployee predicate
+	// inside injectAbsentRows (it gates proactive absent rows only).
+
+	t.Run("non-active era, rostered ON → no absent row", func(t *testing.T) {
+		start := time.Date(2026, 1, 6, 0, 0, 0, 0, time.UTC) // Jan 10 = ON
 		emp := models.Employee{
-			EmployeeID:              8,
-			RosterPayrollTimeTypeID: 10,
-			RosterStartDate:         start,
-			EndDate:                 time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+			EmployeeID: 20, RosterPayrollTimeTypeID: 10, RosterStartDate: start,
+			EraID: int32(eraid.Deleted),
 		}
 		timesheetMap := map[int32]model.OktediTimesheet{}
 		refData := baseRefData([]models.Employee{emp}, map[int32]models.PayrollTimeType{10: onRosterTT})
 
 		injectAbsentRows(testDate, refData.Employees, PrepareOptions{}, timesheetMap, refData)
 
-		require.NotContains(t, timesheetMap, int32(8))
+		require.NotContains(t, timesheetMap, int32(20))
 	})
 
-	t.Run("emp with EndDate within 7-day grace → absent row created", func(t *testing.T) {
+	t.Run("terminated before date, rostered ON → no absent row", func(t *testing.T) {
 		start := time.Date(2026, 1, 6, 0, 0, 0, 0, time.UTC)
-		// testDate is 2026-01-10; threshold = 2026-01-03; emp ended 2026-01-08 → still inject
 		emp := models.Employee{
-			EmployeeID:              9,
-			RosterPayrollTimeTypeID: 10,
-			RosterStartDate:         start,
-			EndDate:                 time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC),
+			EmployeeID: 21, RosterPayrollTimeTypeID: 10, RosterStartDate: start,
+			EraID: int32(eraid.Present), EndDate: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 		}
 		timesheetMap := map[int32]model.OktediTimesheet{}
 		refData := baseRefData([]models.Employee{emp}, map[int32]models.PayrollTimeType{10: onRosterTT})
 
 		injectAbsentRows(testDate, refData.Employees, PrepareOptions{}, timesheetMap, refData)
 
-		require.Contains(t, timesheetMap, int32(9))
-		assert.Equal(t, "absent", timesheetMap[9].ReviewStatus)
+		require.NotContains(t, timesheetMap, int32(21))
 	})
 
 	t.Run("emp with JobID/CostCentreID → copied to absent row", func(t *testing.T) {
@@ -403,4 +420,30 @@ func TestInjectAbsentRows(t *testing.T) {
 		assert.Equal(t, "missing-roster", row.ReviewStatus)
 		assert.Equal(t, float64(0), row.Hours)
 	})
+}
+
+// A clock-in record must always be attributed to its employee, even one who is
+// no longer active — the work happened and must be paid. Only proactive absent
+// rows are gated by ActiveEmployee, not record attribution.
+func TestProcessClockInRecordsAttributesNonActiveEmployee(t *testing.T) {
+	emp := models.Employee{
+		EmployeeID:        30,
+		IdentificationTag: "TAG30",
+		EraID:             int32(eraid.Present),
+		EndDate:           time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), // terminated before testDate (Jan 10)
+	}
+	require.False(t, ActiveEmployee(emp, testDate), "precondition: emp is non-active on the date")
+
+	records := []*model.ClockinRecord{
+		{ID: "r1", Tag: "TAG30", Date: "2026-01-10", Timestamp: "2026-01-10T08:00:00Z"},
+		{ID: "r2", Tag: "TAG30", Date: "2026-01-10", Timestamp: "2026-01-10T16:00:00Z"},
+	}
+	refData := baseRefData([]models.Employee{emp}, map[int32]models.PayrollTimeType{})
+	timesheetMap := map[int32]model.OktediTimesheet{}
+
+	processed, errored := processClockInRecords(testDate, records, refData, timesheetMap)
+
+	require.Contains(t, timesheetMap, int32(30), "worked hours must be recorded even for a terminated employee")
+	assert.Empty(t, errored)
+	assert.ElementsMatch(t, []string{"r1", "r2"}, processed)
 }

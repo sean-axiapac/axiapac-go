@@ -111,3 +111,35 @@ func IsRosteredOn(emp models.Employee, timeType *models.PayrollTimeType, date ti
 	dayInCycle := daysSinceStart % cycleLength
 	return dayInCycle < int(daysOn)
 }
+
+// RosterClass is the single roster classification shared by the daily review
+// (prepared timesheet statuses) and the dashboard's "Not Rostered" card, so
+// "not rostered" means the same thing in both.
+type RosterClass int
+
+const (
+	// RosterOnCycle: an active roster employee rostered on for the date.
+	RosterOnCycle RosterClass = iota
+	// RosterMissing: a roster employee with an invalid roster setup.
+	RosterMissing
+	// RosterNotRostered: not rostered on for the date — non-roster, off-cycle,
+	// or terminated/inactive as of the date.
+	RosterNotRostered
+)
+
+// ClassifyRoster returns the roster classification for an employee on a date.
+// It is the source of truth behind both the daily review's missing-roster /
+// not-rostered statuses and the dashboard's Not Rostered card.
+func ClassifyRoster(emp models.Employee, timeType *models.PayrollTimeType, date time.Time) RosterClass {
+	isRoster, valid, _ := ValidateRoster(emp, timeType)
+	if isRoster && !valid {
+		return RosterMissing
+	}
+	// Not rostered when there's no roster, the employee is off-cycle, or they're
+	// terminated/inactive as of the date. (Missing-roster is checked first so a
+	// broken setup is surfaced as its own status rather than hidden here.)
+	if !isRoster || !ActiveEmployee(emp, date) || !IsRosteredOn(emp, timeType, date) {
+		return RosterNotRostered
+	}
+	return RosterOnCycle
+}

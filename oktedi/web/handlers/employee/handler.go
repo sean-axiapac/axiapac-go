@@ -98,6 +98,9 @@ type EmployeeDetailDTO struct {
 	RosterPeriodStart string `json:"rosterPeriodStart"`
 	RosterPeriodEnd   string `json:"rosterPeriodEnd"`
 	RosterPanel       string `json:"rosterPanel"`
+	// Active: current, non-terminated as of the requested date (same rule that
+	// drives the dashboard's roster/absent gating). False = terminated / inactive.
+	Active bool `json:"active"`
 }
 
 // An employee is "rostered" when both a roster time type and a roster start
@@ -308,6 +311,7 @@ func (ep *Endpoint) Detail(c *gin.Context) {
 		RosterPeriodStart:    periodStart,
 		RosterPeriodEnd:      periodEnd,
 		RosterPanel:          rosterPanel,
+		Active:               oktedicore.ActiveEmployee(emp, date),
 	}))
 }
 
